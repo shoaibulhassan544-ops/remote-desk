@@ -1,3 +1,52 @@
+# TEST REPORT — RemoteDesk v1.0.3 (honest status)
+
+## v1.0.3 addendum (this session)
+- Blue reference UI rewrite (app/ui.py): sidebar Home / Remote Control /
+  Viewer / File Transfer / Trusted Devices / Session History / Settings;
+  deep navy `#0B1220`, card `#13203A`, bright-blue `#2E7DFF` primary +
+  active nav; gold removed. Dark default + working Light toggle (instant).
+  All v1.0.2 functionality preserved: hosting, pairing, connect, viewer,
+  trusted, history, unattended, diagnostics, settings, in-app update
+  download. New: Home device-ID card + Copy + real OS label, Recent
+  Sessions from real history, Quick Actions; Remote Control Quick
+  Connect / Saved Devices tabs + connection-type radios + actionable
+  connect errors; incoming-request dialog with View Screen checkbox +
+  60 s auto-reject; viewer toolbar with real measured quality (frame
+  size + fps) and latency "—"; File Transfer Send/Receive tabs with
+  honest "send not wired" message; Trusted Add/Rename/Remove +
+  Unattended section; History table + search + filter; Settings
+  Security/Network/General/About tabs with disabled 2FA toggle and
+  real File Transfer gate on incoming requests.
+- Internet (direct) mode (new app/internet.py): `get_public_ip()` (ipify,
+  5 s timeout), `get_lan_ip()` (UDP trick), `try_upnp_mapping()` (miniupnpc
+  or honest "not installed" fallback), `check_port_reachable()` (bool
+  self-test). All never raise. Controller connects with the EXISTING
+  direct TCP/TLS `client.connect()` — no protocol change, no signaling
+  server, no relay. UI shows Public IP + LAN IP + UPnP status +
+  "Open port (UPnP)" + copyable details + port-forward guide, and states
+  the CGNAT/strict-router limit plainly.
+- History is now actually recorded: outgoing connect → "Connected",
+  disconnect → "Ended" with real duration; host Accept → "Accepted"
+  (previously `load_history()` was always empty because nothing ever
+  appended to it).
+- Version bumped to 1.0.3 (app/version.py + setup.iss). Ship only v1.0.3+.
+- New tests: tests/test_internet.py (9 tests: ipify plain/JSON parsing,
+  failure → None, UPnP fallback when miniupnpc missing, LAN IP string,
+  port-reachable open→closed, invalid input → False).
+- Verified this session: `python3 -m pytest -q` → **46 passed**
+  (37 existing + 9 new); `python3 -m py_compile app/*.py` OK;
+  `python3 run.py --version` → `1.0.3`; Xvfb headless smoke test OK
+  (construct app, switch all pages, toggle theme twice, Settings/RC/FT
+  tabs, build + close update popup, open incoming-request dialog and
+  auto-close it without blocking, run diagnostics).
+- NOT yet verified: real Windows GUI, in-app download vs a real Release,
+  2-PC LAN test, 2-PC Internet test (UPnP + port forwarding on a real
+  router), installer install/uninstall. Internet mode is code-complete
+  but untested against a real router — UPnP success depends on the
+  router, and CGNAT connections will still fail (relay not included).
+
+---
+
 # TEST REPORT — RemoteDesk v1.0.2 (honest status)
 
 ## v1.0.2 addendum (this session)

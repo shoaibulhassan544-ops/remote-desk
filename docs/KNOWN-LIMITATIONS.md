@@ -1,17 +1,23 @@
-# Known Limitations & Security Notes — RemoteDesk v1.0.0
+# Known Limitations & Security Notes — RemoteDesk v1.0.3
 
 ## Functional limitations
-- **LAN only.** No internet relay in v1. Cross-network sessions need
-  port-forward/VPN or a future relay deployment.
+- **Internet mode is direct TCP only — no relay, no signaling server.**
+  It works when UPnP succeeds or manual port forwarding is set
+  (router → TCP 47900 → host's LAN IP). If both fail (strict / CGNAT
+  router with no public IPv4), a relay server would be needed and is
+  NOT included in this build. The app states this in the UI and docs
+  instead of claiming otherwise.
 - **One session at a time** per host. A second guest is refused while one is active.
 - **Primary monitor only.** No multi-monitor selection, no per-window capture.
 - **Screen capture via `mss`**, not Windows Graphics Capture API (documented
   trade-off in docs/04). Cannot capture locked screens / UAC secure desktop.
 - **Keyboard input: single characters only in v1.** Special keys (Ctrl/Alt/Win/
   arrows/function keys) are not forwarded yet.
-- **File-transfer UI:** "Send a file…" shows the permission note; the actual
-  file-picker send is not wired in the v1 UI (protocol implemented + tested at
-  the module level).
+- **File-transfer SEND is not wired in the UI** (v1.0.3 states this honestly
+  in the File Transfer tab: chooser works, Send sends nothing). The chunked
+  protocol + traversal checks exist at module level and are tested.
+- **No two-factor authentication.** The Settings toggle is present but
+  disabled and labeled "not implemented in this build".
 - **No mid-session permission toggle UI** (revoke exists in session logic).
 - **No audio, no chat, no multi-monitor, no mobile clients.**
 - **No code signing:** Windows SmartScreen may warn on first install.
