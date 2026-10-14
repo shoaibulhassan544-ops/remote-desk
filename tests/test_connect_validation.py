@@ -1,8 +1,8 @@
-"""Tests for the v1.0.4 Device-ID connect fix.
+"""Tests for the v1.0.5 AnyDesk-simple connect flow.
 
-A bare 9-digit Device ID in the IP field must be BLOCKED, never
-attempted as a connection target. This is the exact bug from the
-user's screenshot ("739738074" -> "not found on this LAN").
+A bare 9-digit Device ID is NO LONGER blocked (v1.0.4 behaviour) — it
+becomes "auto_resolve": LAN scan first, then signaling server, else
+ONE simple error. The old "IP required / reference-only" jargon is gone.
 """
 
 import os
@@ -11,18 +11,30 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.connect_target import (  # noqa: E402
+    classify_address,
     looks_like_bare_device_id,
+    resolve_device_id,
     split_host_port,
     validate_connect_input,
 )
 
 
-def test_bare_device_id_blocked_in_ip_field():
-    for bad in ("739738074", "739 738 074", " 739738074 "):
-        decision = validate_connect_input(bad, "", "lan")
-        assert decision["action"] == "error"
-        assert "Device ID" in decision["error"]
-        assert "IP" in decision["error"]
+def test_bare_device_id_auto_resolves_not_blocked():
+    for text in ("739738074", "739 738 074", " 739738074 "):
+        decision = validate_connect_input(text, "", "lan")
+        assert decision["action"] == "auto_resolve"
+        assert decision["device_id"] == "739738074"
+        assert decision["error"] == ""
+
+
+def test_classify_address():
+    assert classify_address("739738074") == "device_id"
+    assert classify_address("739 738 074") == "device_id"
+    assert classify_address("192.168.1.100") == "direct"
+    assert classify_address("192.168.1.100:47900") == "direct"
+    assert classify_address("my-pc.local") == "direct"
+    assert classify_address("") == "invalid"
+    assert classify_address("!!!") == "invalid"
 
 
 def test_looks_like_bare_device_id():
@@ -53,7 +65,32 @@ def test_hostname_direct():
     assert decision["host"] == "my-pc.local"
 
 
-def test_device_id_needs_signaling_url_in_signaling_mode():
+def test_resolve_device_id_lan_first():
+    scan = lambda: {"739738074": {"address": "192.168.1.50", "device_name": "PC"}}
+    host, port, error = resolve_device_id("739738074", "", scan_fn=scan)
+    assert host == "192.168.1.50"
+    assert error is None
+
+
+def test_resolve_device_id_signaling_fallback():
+    scan = lambda: {}
+    lookup = lambda url, did: ({"ip": "203.0.113.9", "port": 47900}, None)
+    host, port, error = resolve_device_id(
+        "739738074", "https://signal.example.com", scan_fn=scan, lookup_fn=lookup)
+    assert host == "203.0.113.9"
+    assert port == 47900
+    assert error is None
+
+
+def test_resolve_device_id_neither_gives_simple_error():
+    host, port, error = resolve_device_id("739738074", "", scan_fn=lambda: {})
+    assert host is None
+    assert error is not None
+    assert "same Wi-Fi" in error
+    assert "reference" not in error.lower()
+
+
+def test_device_id_box_signaling_mode_still_works():
     decision = validate_connect_input("", "739738074", "signaling", "")
     assert decision["action"] == "error"
     assert "Settings" in decision["error"]
@@ -63,7 +100,7 @@ def test_device_id_needs_signaling_url_in_signaling_mode():
     assert decision["device_id"] == "739738074"
 
 
-def test_device_id_in_lan_mode_goes_to_lan_scan():
+def test_device_id_box_lan_mode_goes_to_lan_scan():
     decision = validate_connect_input("", "739738074", "lan")
     assert decision["action"] == "lan_scan"
     assert decision["device_id"] == "739738074"
