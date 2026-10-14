@@ -24,15 +24,23 @@ no fake 2FA, no fake signaling server.
   from `platform.system()` / `platform.release()` (never hardcoded),
   status (Idle / Hosting ON / Connected).
 - Card "Host This PC": Start/Stop Hosting, pairing-code display +
-  "Generate new pairing code", expiry note, connection-type radios
-  (LAN / Internet), Internet-mode block when Internet is selected
-  (Public IP, LAN IP, UPnP status, "Open port (UPnP)", Refresh,
-  "Copy connection details", port-forward guide).
-- Card "Connect to a remote device": Device ID or IP entry + pairing-code
-  entry + "Use unattended" checkbox + blue Connect + Disconnect +
-  shared status line. Resolution: IP/hostname → direct; 9-digit ID or
-  saved-device name → short LAN discovery scan for its address; anything
-  else → "Enter an IP/hostname or pick a Saved Device".
+  "Generate new pairing code", expiry note, connection-type DROPDOWN
+  (LAN / Internet direct / Internet via Signaling Server), Internet-mode
+  block when Internet is selected (Public IP, LAN IP, UPnP status,
+  "Open port (UPnP)", Refresh, "Copy connection details", port-forward
+  guide), Signaling block when Signaling mode is selected (server
+  status + Register button).
+- Card "Connect to a remote device" (v1.0.4): SEPARATE fields —
+  "Remote IP address" (required) + "Remote Device ID" (reference-only)
+  + pairing-code entry + "Use unattended" checkbox + blue Connect +
+  Disconnect + "Find on LAN" (scans and fills the IP) + shared status
+  line. A bare 9-digit ID in the IP field is BLOCKED with a clear
+  error (v1.0.3 bug: the old single "Device ID or IP" box implied an
+  ID alone could connect). Resolution: IP/hostname → direct;
+  Device ID + Signaling mode → signaling-server lookup; Device ID +
+  LAN/Internet mode → short LAN discovery scan; anything else → error.
+  Progress states: Resolving… → Connecting… → Waiting for host… →
+  Connected.
 - Card "Recent sessions": REAL history from `storage.load_history()`
   (device name + IP + timestamp + status); empty state "No sessions yet."
 - Card "Quick actions": File Transfer / Trusted Devices / Settings buttons.
@@ -41,13 +49,17 @@ no fake 2FA, no fake signaling server.
 
 ### 2. Remote Control (Connect page)
 - Tabs: Quick Connect / Saved Devices (small buttons switching sub-frames).
-- Quick Connect: Device ID or Name entry, Port entry, Pairing code /
-  unattended password entry, "Use unattended password" checkbox,
-  connection-type radios (LAN / Internet), prominent blue Connect,
-  Disconnect, Scan LAN, progress/status label with actionable errors,
-  e.g. "Host not reachable at X:47900 — check hosting ON, same Wi-Fi for
-  LAN, or Public IP + port mapping for Internet". Internet-mode block
-  (same as Home) when Internet is selected.
+- Quick Connect: Remote IP address entry, Port entry, Remote Device ID
+  entry (reference-only), Pairing code / unattended password entry,
+  "Use unattended password" checkbox, connection-type DROPDOWN
+  (LAN / Internet direct / Internet via Signaling Server), prominent
+  blue Connect, Disconnect, Scan LAN, "Find on LAN", progress/status
+  label with actionable errors, e.g. "Host not reachable at X:47900 —
+  check hosting ON, same Wi-Fi for LAN, or Public IP + port mapping
+  for Internet". Internet-mode block (same as Home) when Internet is
+  selected; Signaling block when Signaling mode is selected.
+  Settings → Network holds the Signaling server URL + auto-register
+  toggle (see docs/SIGNALING_DEPLOY.md).
 - Saved Devices: trusted list (clicking one fills the Device ID entry),
   "Discovered on LAN" list (clicking one fills its IP), Scan LAN button.
 

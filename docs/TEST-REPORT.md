@@ -125,3 +125,23 @@ Command: `python3 -m py_compile app/*.py server/signaling_stub.py tests/*.py` �
 LAN MVP code is complete and its core logic is tested. The product is NOT
 "release-verified" until the 2-PC test + Actions build + installer test pass.
 Do not ship to users before those three items are checked off.
+
+## v1.0.4 addendum (2026-10-14) — Device-ID bug fix + signaling server + branding
+- `python3 -m pytest -q` → **63 passed** (46 existing + 7 new
+  tests/test_signaling.py + 10 new tests/test_connect_validation.py).
+- `python3 run.py --version` → `1.0.4`; `setup.iss` MyAppVersion `1.0.4`.
+- Xvfb headless smoke test: app constructed, all 7 pages switched,
+  connection-type combobox shows all 3 options, split IP/Device ID
+  fields present, bare-ID block verified, settings tabs + signaling
+  card OK, incoming-request dialog opens + treated as rejected,
+  update popup builds + closes, theme toggled twice — no exceptions.
+- Signaling server live-checked via curl on localhost: /health,
+  /register, /lookup (hit), /lookup unknown ID (404) — all correct.
+- Branding: assets/icon.png (512x512), assets/icon.ico (16/32/48/256),
+  installer_banner.bmp (164x314), installer_small.bmp (55x58) generated
+  with PIL; wired into ui.py (iconphoto/iconbitmap), remote_desk.spec
+  (datas + icon), setup.iss (SetupIconFile + wizard images +
+  UninstallDisplayIcon).
+- Still unverified: real Windows GUI, 2-PC LAN test, 2-PC signaling
+  test against a deployed server, installer install/uninstall,
+  in-app download vs real Release.

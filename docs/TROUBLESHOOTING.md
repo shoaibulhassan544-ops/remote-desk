@@ -28,6 +28,20 @@
   Unlock the host and reconnect.
 - Diagnostics tab → Run diagnostics: check "Screen capture available".
 
+## "Device ID not found on this LAN" / typed a Device ID and it won't connect
+- A 9-digit Device ID **alone cannot connect** — there is no directory
+  to turn it into an IP address. That is why v1.0.4 **blocks** a bare
+  Device ID in the IP field.
+- Fix 1 (no server needed): put the host's **IP address** in "Remote IP
+  address" (same Wi-Fi: LAN IP; different network: public IP + UPnP /
+  port forwarding), or click **Find on LAN** to fill it in.
+- Fix 2 (AnyDesk-style): deploy the signaling server
+  (docs/SIGNALING_DEPLOY.md), paste the **same URL** into Settings →
+  Network on **both** PCs, set Connection type → "Internet (via
+  Signaling Server)", then enter the Device ID. The host must have
+  registered (Start Hosting with auto-register, or "Register this
+  device").
+
 ## LAN scan finds nothing
 - Hosts must have hosting ON. Some routers block UDP broadcasts — use manual
   IP entry instead (always works if the network allows it).

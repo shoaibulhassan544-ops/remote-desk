@@ -1,12 +1,21 @@
-# Known Limitations & Security Notes — RemoteDesk v1.0.3
+# Known Limitations & Security Notes — RemoteDesk v1.0.4
 
 ## Functional limitations
-- **Internet mode is direct TCP only — no relay, no signaling server.**
-  It works when UPnP succeeds or manual port forwarding is set
-  (router → TCP 47900 → host's LAN IP). If both fail (strict / CGNAT
-  router with no public IPv4), a relay server would be needed and is
-  NOT included in this build. The app states this in the UI and docs
-  instead of claiming otherwise.
+- **Internet mode is direct TCP only — no relay.** The v1.0.4
+  signaling server is a directory only (ID → IP); it does NOT proxy
+  sessions. Direct TCP works when UPnP succeeds or manual port
+  forwarding is set (router → TCP 47900 → host's LAN IP). If both
+  fail (strict / CGNAT router with no public IPv4), a relay server
+  would be needed and is NOT included in this build.
+- **Device-ID connect REQUIRES the signaling server.** A 9-digit
+  Device ID alone cannot resolve to an address — the v1.0.3 UI
+  wrongly implied it could. In v1.0.4 the IP field rejects a bare
+  Device ID, and ID connect works only when both PCs use the same
+  signaling-server URL (Settings → Network). The server is NOT
+  hosted for you — deploy it per docs/SIGNALING_DEPLOY.md.
+- **Signaling directory is unauthenticated.** Anyone who knows the
+  server URL can register / look up IDs and learn IPs. Keep the URL
+  private. It never sees passwords or screen content.
 - **One session at a time** per host. A second guest is refused while one is active.
 - **Primary monitor only.** No multi-monitor selection, no per-window capture.
 - **Screen capture via `mss`**, not Windows Graphics Capture API (documented
