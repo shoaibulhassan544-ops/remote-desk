@@ -4,7 +4,10 @@ import os
 block_cipher = None
 
 a = Analysis(
-    ['app/main.py'],
+    # DO NOT use app/main.py here: it uses relative imports and fails
+    # in a built EXE with "attempted relative import with no known
+    # parent package". run.py uses absolute imports instead.
+    ['run.py'],
     pathex=[os.path.abspath('.')],
     binaries=[],
     datas=[],
