@@ -6,10 +6,10 @@ NO authentication, NO encryption, and NEVER proxies screen data.
 Screen/input/file traffic always flows directly between the two peers
 over their own TLS session (see app/host.py + app/client.py).
 
-For real internet use, deploy coturn (STUN/TURN) per docs/TURN-DEPLOYMENT.md
-and a proper authenticated signaling server — this stub must NOT be used
-for that. If you expose this stub to the internet, anyone could enumerate
-registered devices.
+For real Device-ID lookup, use the real server in
+server/signaling_server.py (HTTP JSON API, see docs/SIGNALING_DEPLOY.md) —
+this stub must NOT be used for that. If you expose this stub to the
+internet, anyone could enumerate registered devices.
 
 Run:  python server/signaling_stub.py --port 47902
 """
