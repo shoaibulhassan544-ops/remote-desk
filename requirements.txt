@@ -1,0 +1,8 @@
+# RemoteDesk — runtime dependencies (Windows target: Python 3.11).
+# Versions pinned to known-good releases. Install: pip install -r requirements.txt
+
+mss==10.0.0            # screen capture (Windows Graphics Capture alternative documented in docs/)
+Pillow==10.4.0         # JPEG encode/decode for screen frames
+pynput==1.7.7          # mouse/keyboard injection (Windows only; guarded import)
+pyperclip==1.9.0       # optional clipboard sync (guarded import)
+cryptography==42.0.8   # TLS cert generation + future key storage
