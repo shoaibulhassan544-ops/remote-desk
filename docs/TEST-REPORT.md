@@ -1,3 +1,23 @@
+# TEST REPORT — RemoteDesk v1.0.2 (honest status)
+
+## v1.0.2 addendum (this session)
+- VIP sidebar UI rewrite (app/ui.py): sidebar + header + status pill +
+  instant theme toggle, all previous features kept wired (hosting, pairing,
+  connect, viewer, files, trusted, history, security, diagnostics, settings).
+- In-app update download (app/update_checker.py + app/ui.py): popup downloads
+  the `Setup-RemoteDesk-*.exe` asset in-app with progress bar; Run Installer
+  only on user click; browser fallback only when no asset / download fails.
+- Version bumped to 1.0.2 (app/version.py + setup.iss) so the installer is
+  `Setup-RemoteDesk-1.0.2.exe`.
+- New tests: tests/test_update_download.py (asset selection, local-server
+  download with progress, failure returns error not raise).
+- v1.0.0 installer had the relative-import startup crash; v1.0.1 fixed it via
+  run.py. Do NOT ship v1.0.0 / v1.0.1 installers — ship v1.0.2+.
+- UI run on real Windows / in-app download against a real Release: NOT yet
+  verified (headless VM; must be checked after the v1.0.2 Actions build).
+
+---
+
 # TEST REPORT — RemoteDesk v1.0.0 (honest status)
 
 Date: 2026-10-14. Environment: Linux dev VM, Python 3.12.3.

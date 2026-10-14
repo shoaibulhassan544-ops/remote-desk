@@ -31,8 +31,11 @@ release tag against its own version.
 6. GitHub → Releases → `v1.1.0` now exists with `Setup-RemoteDesk-1.1.0.exe`.
    **This Release is the trigger.** Within a day (or on manual "Check for
    Updates"), every installed copy shows:
-   > "New update available: v1.1.0 — [Download Update] / [Later]"
-   Download opens the Release page; the user installs the new installer.
+   > "New update available: v1.1.0 — [Download Update] / [Run Installer] / [Later]"
+   [Download Update] downloads the installer **inside the app** (progress bar,
+   to `~/Downloads/RemoteDesk-Updates/`); [Run Installer] launches it only
+   after the user clicks it. The browser release page is only a fallback
+   when no `Setup-RemoteDesk-*.exe` asset exists or the download fails.
 
 ## Rules that must not be broken
 - The tag MUST be `vX.Y.Z` and MUST be newer (semver) than the previous tag,
@@ -45,6 +48,16 @@ release tag against its own version.
   installer themselves (no silent code execution).
 
 ## Testing the popup before telling users
-1. Publish a test Release (e.g. `v1.0.1`) with any tiny change.
-2. On an installed copy of v1.0.0: Settings & About → "Check for Updates now".
-3. Confirm the popup shows v1.0.1 + changelog + Download opens the Release page.
+1. Publish a test Release (e.g. `v1.0.3`) with any tiny change.
+2. On an installed copy of v1.0.2: Settings & About → "Check for Updates now".
+3. Confirm the popup shows v1.0.3 + changelog, [Download Update] downloads
+   the installer in-app with a progress bar (no browser redirect), and
+   [Run Installer] launches it only after you click it.
+
+## Version history note
+- v1.0.0 installer: built from `app/main.py` — crashed on startup with
+  "attempted relative import with no known parent package". **Do not ship it.**
+- v1.0.1: fixed by `run.py` (absolute-import entry point) + spec entry `run.py`.
+  **Do not ship v1.0.1 either** — v1.0.2 supersedes it (VIP UI + in-app download).
+- v1.0.2: VIP sidebar UI, in-app update download, "How to connect" card.
+  Ship only v1.0.2+ installers.
