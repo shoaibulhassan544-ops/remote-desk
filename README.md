@@ -8,7 +8,7 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
-## What it does (v1.0.5 — AnyDesk-simple flow, Option 1 blue UI, centered update popup, icon fix)
+## What it does (v1.0.6 — v1.0.5 flow + installer auto-close fix)
 
 - **FINAL FLOW — Address → Connect → Host Accept. No pairing code.**
   Home has ONE "Remote Address" box (Device ID ya IP) + big Connect
@@ -39,7 +39,12 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
   If Windows still shows the old icon: uninstall old version first +
   clear the icon cache (see docs/TROUBLESHOOTING.md).
 - Pairing codes were REMOVED from the assisted flow in v1.0.5
-  (PairingCodeStore kept only for compatibility). Ship only v1.0.5+.
+  (PairingCodeStore kept only for compatibility). Ship only v1.0.6+.
+- v1.0.6 installer fix: the installer now auto-closes a running
+  RemoteDesk (Restart Manager) before replacing files. Before v1.0.6,
+  upgrading while the app was running failed with "DeleteFile failed;
+  code 5. Access is denied." — and the old UI stayed because the new
+  EXE never replaced the old one.
 
 ## What it does (v1.0.4 — Device-ID bug fix + signaling server + branding)
 

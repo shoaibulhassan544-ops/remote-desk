@@ -4,7 +4,7 @@
 ; Version is read from the app at build time — update app/version.py, then rebuild.
 
 #define MyAppName "RemoteDesk"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "Shoaib Azeez"
 #define MyAppExeName "RemoteDesk.exe"
 
@@ -26,6 +26,16 @@ WizardSmallImageFile=assets\installer_small.bmp
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64
+; v1.0.6 — UPGRADE FIX: the old RemoteDesk.exe was often still RUNNING when
+; the user installed the new version, so Windows locked the file and the
+; installer failed with "DeleteFile failed; code 5. Access is denied."
+; (and the old UI stayed because the new EXE never replaced it).
+; CloseApplications asks the Windows Restart Manager to close the running
+; RemoteDesk app before files are replaced; RestartApplications restarts
+; it afterwards when possible.
+CloseApplications=yes
+CloseApplicationsFilter=RemoteDesk.exe
+RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
