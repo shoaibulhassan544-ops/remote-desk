@@ -31,7 +31,11 @@ ArchitecturesInstallIn64BitMode=x64
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checked
+; NOTE: Inno Setup [Tasks] has NO "checked" flag — tasks are checked by
+; default unless "unchecked" is given. "checkedonce" = checked on first
+; install, then remembers the user's choice. ("checked" here broke the
+; v1.0.5 build with: Parameter "Flags" includes an unknown flag.)
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
