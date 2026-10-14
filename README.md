@@ -8,6 +8,39 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
+## What it does (v1.0.5 — AnyDesk-simple flow, Option 1 blue UI, centered update popup, icon fix)
+
+- **FINAL FLOW — Address → Connect → Host Accept. No pairing code.**
+  Home has ONE "Remote Address" box (Device ID ya IP) + big Connect
+  button (+ Disconnect, Find on LAN; Enter also connects). The app
+  auto-resolves: IP direct, Device ID via LAN scan, Device ID via
+  signaling server (if configured). The host ALWAYS sees the Incoming
+  Request popup (requester name + Device ID + IP, View/Control/File
+  checkboxes, Accept green / Decline red, 60 s auto-reject). Host
+  Accepts → session starts. Decline/timeout → controller sees
+  "Host ne request decline kar di / jawab nahi diya."
+- **Trusted Devices = address book ONLY.** One click fills the Remote
+  Address field. It does NOT auto-accept — host Accept is still
+  required every time.
+- **Unattended = the ONLY no-Accept path.** Opt-in, password-protected:
+  host enables it in Trusted Devices + sets a password; guest ticks
+  "Unattended (password se)" and enters the password. No popup.
+- **Option 1 "AnyDesk Blue" UI** (user-selected): deep navy `#0B1220`,
+  card `#13203A`, bright-blue `#2E7DFF` primary/active nav, Home =
+  YOUR ADDRESS + HOST THIS PC + CONNECT + Recent Sessions + Quick
+  Actions + Activity log. Advanced options (connection type, signaling
+  URL, Public IP/UPnP) live in Settings → Network only.
+- **Centered update popup:** opens centered inside the app (never in a
+  browser), fixed footer below the changelog with version row, progress
+  bar + live status (`Downloading… 4.2 / 21.3 MB (20%) • 1.1 MB/s`),
+  [Download Update] → [Run Installer] (click-only) + [Later].
+- **Icon fix:** multi-size `.ico` (16–256) + desktop icon ON by default
+  + embedded PNG fallback, so taskbar/desktop show the real logo.
+  If Windows still shows the old icon: uninstall old version first +
+  clear the icon cache (see docs/TROUBLESHOOTING.md).
+- Pairing codes were REMOVED from the assisted flow in v1.0.5
+  (PairingCodeStore kept only for compatibility). Ship only v1.0.5+.
+
 ## What it does (v1.0.4 — Device-ID bug fix + signaling server + branding)
 
 - **BUG FIX — a Device ID alone never connected (the screenshot bug).**
@@ -44,16 +77,16 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
   buttons + active nav (no gold), instant dark/light theme toggle
 - Home: "Welcome Back!", Your Device ID card (formatted, Copy button),
   real OS label, host card (Start Hosting + pairing code), Connect box
-  (Device ID / IP + pairing code), Recent Sessions from real history,
+  (Address + Connect), Recent Sessions from real history,
   Quick Actions, activity log, "Developed by Shoaib Azeez" footer
-- Remote Control: Quick Connect / Saved Devices tabs, connection-type
-  radios (LAN / Internet), prominent blue Connect, actionable errors
-  (e.g. "Host not reachable at X:47900 — check hosting ON, same Wi-Fi
-  for LAN, or Public IP + port mapping for Internet"), Port, pairing
-  code, unattended checkbox, Disconnect, Scan LAN
+- Remote Control: Quick Connect / Saved Devices tabs, prominent blue
+  Connect, actionable errors (e.g. "Host not reachable at X:47900 —
+  check hosting ON, same Wi-Fi for LAN, or Public IP + port mapping
+  for Internet"), Port, Unattended (password se) checkbox, Disconnect,
+  Scan LAN
 - **Internet (direct) mode, no relay server:** host shows Public IP +
   LAN IP + UPnP status + "Open port (UPnP)" + copyable "Public IP +
-  Port + Pairing code" line + port-forward guide. The controller
+  Port + Address" line + port-forward guide. The controller
   connects with the same direct TCP/TLS path to the public IP. Works
   when UPnP succeeds or port forwarding is set; strict / CGNAT routers
   need a relay server, which is NOT included — the app says so instead
@@ -105,9 +138,10 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 1. Install Python 3.11.
 2. `pip install -r requirements.txt`
 3. `python -m app.main`
-4. On the host PC: **Start Hosting**, share the 6-digit pairing code.
-5. On the guest PC: enter host IP + pairing code → **Connect**.
-   The host must click **Accept**.
+4. On the host PC: **Start Hosting**.
+5. On the guest PC: enter the host's Address (Device ID ya IP) →
+   **Connect**. The host must click **Accept** on the popup.
+   (Unattended, password-protected, is the only no-Accept path.)
 
 ## Build the installer
 
@@ -138,7 +172,10 @@ GitHub Release (which is what triggers clients' update popup).
 ## Security summary
 
 - TLS (stdlib `ssl`) for all session traffic; per-device self-signed cert.
-- Pairing code: 6 digits, 5-minute expiry, single use, 5-attempt lockout.
+- Assisted sessions: host Accept popup is ALWAYS required — no pairing
+  code, no auto-accept (not even for trusted devices). Trusted Devices
+  is an address book only. Unattended (password, opt-in) is the only
+  no-Accept path.
 - Unattended password: salted PBKDF2 hash only, min 10 chars.
 - No passwords / tokens / keys / screen content are ever logged.
 - See docs/05-security-threat-model.md for the full model.
