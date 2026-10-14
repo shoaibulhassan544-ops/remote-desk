@@ -55,6 +55,8 @@ DEFAULT_SETTINGS = {
     "unattended_password_hash": "",
     "unattended_allow_control": False,
     "hosting_enabled": False,
+    "connection_type": "lan",  # "lan" | "internet" — UI default, saved
+    "file_transfer_enabled": True,  # global gate; per-session host Accept still required
 }
 
 # ------------------------------------------------------------------ settings
