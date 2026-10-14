@@ -1,4 +1,4 @@
-# UI/UX & Screen Flow — RemoteDesk v1.0.3 (blue reference)
+# UI/UX & Screen Flow — RemoteDesk v1.0.5 (Option 1 AnyDesk Blue, final flow)
 
 Style (v1.0.3): professional dark-mode desktop app matching the reference
 look. Window 1000×680, minsize 860×600. Left sidebar navigation (fixed
@@ -17,30 +17,29 @@ no fake 2FA, no fake signaling server.
 
 ## Screens (single window, sidebar, stacked frames — no Notebook tabs)
 
-### 1. Home
+### 1. Home — FINAL v1.0.5 FLOW: Address → Connect → Host Accept
 - "Welcome Back!" heading + subtitle.
-- Card "Your Device ID": real device ID formatted in groups of 3
-  (e.g. "738 452 910") + Copy button (clipboard), device name, OS label
-  from `platform.system()` / `platform.release()` (never hardcoded),
-  status (Idle / Hosting ON / Connected).
-- Card "Host This PC": Start/Stop Hosting, pairing-code display +
-  "Generate new pairing code", expiry note, connection-type DROPDOWN
-  (LAN / Internet direct / Internet via Signaling Server), Internet-mode
-  block when Internet is selected (Public IP, LAN IP, UPnP status,
-  "Open port (UPnP)", Refresh, "Copy connection details", port-forward
-  guide), Signaling block when Signaling mode is selected (server
-  status + Register button).
-- Card "Connect to a remote device" (v1.0.4): SEPARATE fields —
-  "Remote IP address" (required) + "Remote Device ID" (reference-only)
-  + pairing-code entry + "Use unattended" checkbox + blue Connect +
-  Disconnect + "Find on LAN" (scans and fills the IP) + shared status
-  line. A bare 9-digit ID in the IP field is BLOCKED with a clear
-  error (v1.0.3 bug: the old single "Device ID or IP" box implied an
-  ID alone could connect). Resolution: IP/hostname → direct;
-  Device ID + Signaling mode → signaling-server lookup; Device ID +
-  LAN/Internet mode → short LAN discovery scan; anything else → error.
-  Progress states: Resolving… → Connecting… → Waiting for host… →
-  Connected.
+- Card "YOUR ADDRESS": the 9-digit Device ID in huge text + Copy button,
+  device name, OS label from `platform.system()` / `platform.release()`
+  (never hardcoded), status (Idle / Hosting ON / Connected), small
+  muted line "IP (LAN): … • Public IP (Internet): …".
+- Card "HOST THIS PC": Start/Stop Hosting + note that the other PC
+  types this PC's Address and the host gets an Accept popup. NO
+  pairing code, NO connection-type controls on Home (those live in
+  Settings → Network).
+- Card "Connect to a remote device": ONLY "Remote Address" Entry
+  (Device ID ya IP — placeholder "739 738 074 ya 192.168.1.100"),
+  big blue Connect + Disconnect + Find on LAN; Enter key also
+  connects. Below: "Unattended (password se)" checkbox — when ticked,
+  a password entry appears (the ONLY no-Accept path). Help lines:
+  "1) Dusre PC pe Start Hosting dabao, uska Address lo. 2) Yahan
+  Address likh ke Connect dabao — dusre PC pe Accept ka popup aayega."
+  + "Assisted: host ke popup pe Accept zaroori hai."
+  Resolution: IP/hostname → direct; Device ID → LAN scan first,
+  then signaling lookup (if URL configured); not found → one simple
+  error. Progress states: Resolving… → Connecting… → Waiting for
+  host… → Connected. Decline/timeout → "Host ne request decline kar
+  di / jawab nahi diya."
 - Card "Recent sessions": REAL history from `storage.load_history()`
   (device name + IP + timestamp + status); empty state "No sessions yet."
 - Card "Quick actions": File Transfer / Trusted Devices / Settings buttons.
@@ -49,18 +48,17 @@ no fake 2FA, no fake signaling server.
 
 ### 2. Remote Control (Connect page)
 - Tabs: Quick Connect / Saved Devices (small buttons switching sub-frames).
-- Quick Connect: Remote IP address entry, Port entry, Remote Device ID
-  entry (reference-only), Pairing code / unattended password entry,
-  "Use unattended password" checkbox, connection-type DROPDOWN
-  (LAN / Internet direct / Internet via Signaling Server), prominent
-  blue Connect, Disconnect, Scan LAN, "Find on LAN", progress/status
-  label with actionable errors, e.g. "Host not reachable at X:47900 —
-  check hosting ON, same Wi-Fi for LAN, or Public IP + port mapping
-  for Internet". Internet-mode block (same as Home) when Internet is
-  selected; Signaling block when Signaling mode is selected.
-  Settings → Network holds the Signaling server URL + auto-register
-  toggle (see docs/SIGNALING_DEPLOY.md).
-- Saved Devices: trusted list (clicking one fills the Device ID entry),
+- Quick Connect: ONE "Remote Address" entry (Device ID ya IP), Port
+  entry, "Unattended (password se)" checkbox (ticking reveals the
+  password entry), prominent blue Connect, Disconnect, Scan LAN,
+  "Find on LAN", progress/status label with actionable errors, e.g.
+  "Host not reachable at X:47900 — check hosting ON, same Wi-Fi for
+  LAN, or Public IP + port mapping for Internet". NO pairing-code
+  field, NO connection-type dropdown here — advanced options live in
+  Settings → Network (Signaling server URL + auto-register, see
+  docs/SIGNALING_DEPLOY.md).
+- Saved Devices: trusted list = address book (clicking one fills the
+  Remote Address entry; host Accept still required every time),
   "Discovered on LAN" list (clicking one fills its IP), Scan LAN button.
 
 ### 3. Viewer

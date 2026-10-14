@@ -10,37 +10,43 @@
 - Client isolation: some guest Wi-Fi / hotspots block PC-to-PC traffic.
   Use a home router, or connect both PCs by cable / same router.
 
-## "Pairing code expired / incorrect"
-- Codes expire after 5 minutes and work once. Host: Dashboard → "Generate new
-  pairing code" and read the fresh code to the guest.
-- After 5 wrong attempts the code locks for 5 minutes — generate a new one.
-
-## "Host rejected the request"
-- The host clicked Reject (or ignored the dialog). Ask them to Accept and tick
-  the permission checkboxes you need.
+## "Host rejected the request" / "Host ne request decline kar di"
+- The host clicked Decline (or ignored the dialog for 60 s = auto-reject).
+  Ask them to Accept and tick the permission checkboxes you need.
+- v1.0.5 has NO pairing codes in the assisted flow — a Decline is just
+  a Decline; reconnecting sends a fresh request for the host to Accept.
 
 ## "Unattended access is disabled" / "Invalid unattended password"
-- On the host: Security tab → enable unattended access + set a password
-  (min 10 chars, letter + digit) → Save. Use that exact password as guest.
+- On the host: Trusted Devices page → enable unattended access + set a
+  password (min 10 chars, letter + digit) → Save. Guest: tick
+  "Unattended (password se)" and enter that exact password.
 
 ## Black / frozen viewer
 - Host screen capture may be unavailable (locked screen, secure desktop).
   Unlock the host and reconnect.
 - Diagnostics tab → Run diagnostics: check "Screen capture available".
 
-## "Device ID not found on this LAN" / typed a Device ID and it won't connect
-- A 9-digit Device ID **alone cannot connect** — there is no directory
-  to turn it into an IP address. That is why v1.0.4 **blocks** a bare
-  Device ID in the IP field.
-- Fix 1 (no server needed): put the host's **IP address** in "Remote IP
-  address" (same Wi-Fi: LAN IP; different network: public IP + UPnP /
-  port forwarding), or click **Find on LAN** to fill it in.
-- Fix 2 (AnyDesk-style): deploy the signaling server
-  (docs/SIGNALING_DEPLOY.md), paste the **same URL** into Settings →
-  Network on **both** PCs, set Connection type → "Internet (via
-  Signaling Server)", then enter the Device ID. The host must have
-  registered (Start Hosting with auto-register, or "Register this
-  device").
+## "Device ID not found" / typed a Device ID and it won't connect
+- Since v1.0.5, Home has ONE "Remote Address" box: type the Device ID
+  **or** the IP — the app auto-resolves it (LAN scan first, then the
+  signaling server if one is configured). No separate IP field anymore.
+- If the ID is not found: check hosting is ON on the other PC and both
+  PCs are on the same Wi-Fi, or type that PC's IP address directly,
+  or set up the signaling server (docs/SIGNALING_DEPLOY.md) and paste
+  the same URL into Settings → Network on **both** PCs.
+
+## "Do I need a pairing code?"
+- No. v1.0.5 removed pairing codes from the assisted flow: Address →
+  Connect → host Accept popup. Trusted Devices is an address book
+  only — it fills the Address field, but host Accept is still required
+  every time. The only no-Accept path is Unattended (password, opt-in).
+
+## Taskbar / desktop icon still shows the old (default) icon
+- v1.0.5 ships a multi-size icon (16–256) + desktop icon ON by default.
+- If Windows still shows the old icon after an upgrade: **uninstall the
+  old version first**, then install the new one. Windows caches icons —
+  clear the cache (`ie4uinit.exe -show` in Run), log out/in, and
+  unpin/re-pin the taskbar shortcut if you pinned the old EXE.
 
 ## LAN scan finds nothing
 - Hosts must have hosting ON. Some routers block UDP broadcasts — use manual

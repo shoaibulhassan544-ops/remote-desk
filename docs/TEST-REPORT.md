@@ -145,3 +145,31 @@ Do not ship to users before those three items are checked off.
 - Still unverified: real Windows GUI, 2-PC LAN test, 2-PC signaling
   test against a deployed server, installer install/uninstall,
   in-app download vs real Release.
+
+## v1.0.5 addendum (2026-10-14) — FINAL FLOW: Address → Connect → Host Accept
+- `python3 -m pytest -q` → **79 passed** (63 v1.0.4 + 6 new
+  tests/test_update_popup.py [update-status math, 6-size ICO,
+  desktop-icon default ON, embedded PNG] + 10 rewritten
+  tests/test_connect_validation.py [Device ID auto-resolve, LAN-first,
+  signaling fallback, simple error] + 6 new
+  tests/test_assisted_connect.py [request method passes, trusted
+  method rejected, unknown rejected, unattended password verified,
+  address-book store]).
+- `python3 run.py --version` → `1.0.5`; `setup.iss` MyAppVersion `1.0.5`.
+- Xvfb headless smoke test: all 7 pages switch, theme toggled twice,
+  centered non-resizable update popup builds (footer visible),
+  Home single-address box + Unattended toggle present — no exceptions.
+- FLOW (final, overrides v1.0.4 pairing-code + v1.0.5-draft trusted
+  auto-accept): assisted = Address → Connect → host Accept popup
+  (name + ID + IP, View/Control/File checkboxes, Accept/Decline,
+  60 s auto-reject). NO pairing code, NO auto-accept. Trusted Devices
+  = address book only. Unattended (password, opt-in) = only no-Accept
+  path. PairingCodeStore kept only for compatibility.
+- UI: Option 1 "AnyDesk Blue" (user-selected). Centered update popup
+  with fixed footer (version row, progress + MB/%/speed status,
+  Download → Run Installer). Icon: 6-size ICO + desktop icon ON +
+  embedded PNG fallback + icon-cache troubleshooting note.
+- Still unverified: real Windows GUI, 2-PC LAN test, 2-PC signaling
+  test against a deployed server, installer install/uninstall,
+  in-app download vs real Release, File Transfer Send still not wired,
+  2FA still not implemented (UI says so).
