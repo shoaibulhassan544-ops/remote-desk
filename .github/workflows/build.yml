@@ -26,6 +26,14 @@ jobs:
         run: python -m pytest -q
       - name: Build EXE (PyInstaller)
         run: pyinstaller remote_desk.spec
+      - name: Verify EXE icon (v1.0.7)
+        # The desktop icon pointed at {app}\RemoteDesk.exe, so a silently
+        # missing embedded icon meant a generic default desktop icon.
+        # Fail the build if the EXE has no RT_GROUP_ICON / RT_ICON
+        # resources, so a bad icon can never ship silently again.
+        run: |
+          pip install pefile
+          python -c "import pefile, sys; pe = pefile.PE('dist\\RemoteDesk.exe'); res = getattr(pe, 'DIRECTORY_ENTRY_RESOURCE', None); types = {e.struct.Id for e in res.entries} if res else set(); print('resource types:', sorted(types)); print('EXE icon OK' if 14 in types and 3 in types else 'FAIL: EXE has no RT_GROUP_ICON(14)/RT_ICON(3) - icon would show as default'); sys.exit(0 if 14 in types and 3 in types else 1)"
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
       - name: Build installer
