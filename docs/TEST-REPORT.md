@@ -173,3 +173,29 @@ Do not ship to users before those three items are checked off.
   test against a deployed server, installer install/uninstall,
   in-app download vs real Release, File Transfer Send still not wired,
   2FA still not implemented (UI says so).
+
+## v1.0.6 addendum (2026-10-14) — INSTALLER UPGRADE FIX ONLY
+- User's v1.0.5 screenshots showed the installer failing with
+  "Setup was unable to automatically close all applications" and
+  "DeleteFile failed; code 5. Access is denied." on
+  `...\\Programs\\RemoteDesk\\RemoteDesk.exe` — because the OLD
+  RemoteDesk.exe was still RUNNING and locked its own file.
+  Consequence: the new EXE never replaced the old one, so the user
+  kept seeing the OLD UI and reported "UI change nahi hua".
+- Fix (setup.iss [Setup] only): `CloseApplications=yes`,
+  `CloseApplicationsFilter=RemoteDesk.exe`,
+  `RestartApplications=yes` — the Restart Manager closes the running
+  app before files are replaced. No UI redesign in v1.0.6.
+- UI VERIFIED in code (grep, v1.0.5 flow already present): single
+  "Remote Address" entry (ui.py:625,719) + Enter binding (:629),
+  NO pairing-code field anywhere (only a compat no-op at :1583),
+  host Accept/Decline popup (:1686/:1689), centered update popup
+  with fixed footer (:2286+), Option 1 blue theme (#0B1220 / #2E7DFF).
+  Old-UI sightings were failed upgrades, not missing UI code.
+- `python3 -m pytest -q` → **79 passed** (unchanged). `python3 run.py
+  --version` → `1.0.6`; `setup.iss` MyAppVersion `1.0.6`. Xvfb smoke:
+  app builds, pages switch, no exceptions.
+- Still unverified: real Windows upgrade run (old app running +
+  installer auto-close), 2-PC LAN/signaling test, in-app download
+  vs real Release, File Transfer Send still not wired, 2FA still
+  not implemented (UI says so). Ship only v1.0.6+.

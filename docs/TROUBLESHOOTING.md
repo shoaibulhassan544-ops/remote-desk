@@ -48,6 +48,16 @@
   clear the cache (`ie4uinit.exe -show` in Run), log out/in, and
   unpin/re-pin the taskbar shortcut if you pinned the old EXE.
 
+## Installer: "Setup was unable to automatically close all applications" / "DeleteFile failed; code 5. Access is denied."
+- Cause: the OLD RemoteDesk.exe was still running, so Windows locked
+  its file and the installer could not replace it. The old UI stayed
+  because the new version never actually got installed.
+- v1.0.6+ fix: the installer auto-closes the running app (Restart
+  Manager) before replacing files, so this should not happen anymore.
+- If it still happens on an older installer: close RemoteDesk fully
+  (right-click its tray icon → Exit, or Task Manager → End task on
+  RemoteDesk.exe), or uninstall the old version first, then install.
+
 ## LAN scan finds nothing
 - Hosts must have hosting ON. Some routers block UDP broadcasts — use manual
   IP entry instead (always works if the network allows it).
