@@ -26,6 +26,9 @@ class RemoteClient:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.latency_ms: float | None = None
+        # Host screen size in pixels, from the latest screen_frame
+        # payload (w/h). (0, 0) = unknown yet — UI falls back to raw coords.
+        self.host_screen_size: tuple[int, int] = (0, 0)
 
     @property
     def connected(self) -> bool:
@@ -142,6 +145,10 @@ class RemoteClient:
                     continue
                 if msg["type"] == "screen_frame":
                     try:
+                        w = int(msg["payload"].get("w") or 0)
+                        h = int(msg["payload"].get("h") or 0)
+                        if w > 0 and h > 0:
+                            self.host_screen_size = (w, h)
                         self.on_frame(protocol.b64d(msg["payload"].get("jpeg_b64", "")))
                     except (ValueError, KeyError):
                         pass

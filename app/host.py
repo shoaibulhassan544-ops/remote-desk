@@ -18,13 +18,15 @@ import threading
 import time
 
 from . import config, protocol, screen, security, storage
+from .discovery import DiscoveryBroadcaster
 from .session import Session, SessionManager
 
 
 class HostServer:
     def __init__(self, device_id: str, device_name: str, port: int,
                  settings: dict, data_dir: str | None = None,
-                 on_request=None, on_frame_sent=None, on_log=None):
+                 on_request=None, on_frame_sent=None, on_log=None,
+                 on_input_event=None):
         self.device_id = device_id
         self.device_name = device_name
         self.port = port
@@ -33,25 +35,55 @@ class HostServer:
         self.on_request = on_request or (lambda peer: (False, False, False))
         self.on_frame_sent = on_frame_sent or (lambda n: None)
         self.on_log = on_log or (lambda msg: None)
+        # Test hook: when set, inbound input events are delivered here
+        # INSTEAD of moving the real mouse/keyboard. Production passes None.
+        self.on_input_event = on_input_event
         self.pairing = security.PairingCodeStore()
         self.rate_limiter = security.RateLimiter()
         self.sessions = SessionManager()
         self._stop = threading.Event()
+        # Set by _serve once the socket is listening (or once it has
+        # definitively failed). start() waits on it so callers never
+        # connect before the server is ready (first-run TLS keygen
+        # otherwise made connect race and fail with "Connection refused").
+        self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._conn = None
+        self._broadcaster: DiscoveryBroadcaster | None = None
 
     # ------------------------------------------------------------- lifecycle
     def start(self):
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._ready.clear()
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
+        # Wait until _serve is actually listening (or has failed) —
+        # without this, an immediate connect races first-run TLS
+        # key generation and fails with "Connection refused".
+        self._ready.wait(timeout=15.0)
         self.on_log(f"Hosting started on port {self.port}.")
+        # BUG A FIX (v1.0.7): the host MUST broadcast its presence, or LAN
+        # discovery can never find it and a Device ID (Address) can never
+        # resolve on the LAN. A broadcaster failure must never kill hosting.
+        try:
+            self._broadcaster = DiscoveryBroadcaster(
+                self.device_id, self.device_name, self.port)
+            self._broadcaster.start()
+        except Exception as exc:  # noqa: BLE001 — discovery is best-effort
+            self._broadcaster = None
+            self.on_log(f"LAN discovery broadcast unavailable: {exc}")
 
     def stop(self):
         self._stop.set()
         self.sessions.end_active("ended")
+        try:
+            if self._broadcaster is not None:
+                self._broadcaster.stop()
+        except Exception:
+            pass
+        self._broadcaster = None
         try:
             if self._conn:
                 self._conn.close()
@@ -65,6 +97,7 @@ class HostServer:
             cert, key = security.ensure_tls_cert(self.data_dir)
         except RuntimeError as exc:
             self.on_log(f"Hosting failed: {exc}")
+            self._ready.set()
             return
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(cert, key)
@@ -76,7 +109,9 @@ class HostServer:
             srv.settimeout(1.0)
         except OSError as exc:
             self.on_log(f"Hosting failed: cannot listen on port {self.port}: {exc}")
+            self._ready.set()
             return
+        self._ready.set()
         while not self._stop.is_set():
             try:
                 raw, addr = srv.accept()
@@ -197,12 +232,16 @@ class HostServer:
                 break
             now = time.time()
             if now - last_frame >= interval:
-                frame = screen.capture_jpeg(
+                frame, fw, fh = screen.capture_jpeg_with_size(
                     quality=int(self.settings.get("jpeg_quality", config.DEFAULT_JPEG_QUALITY)))
                 if frame is not None:
+                    # BUG B FIX: send the REAL captured size. The guest
+                    # maps its canvas clicks into this coordinate space;
+                    # previously w/h were hardcoded 0, so clicks landed
+                    # in the wrong place (or nowhere useful).
                     self._send(conn, "screen_frame",
                                {"jpeg_b64": protocol.b64e(frame),
-                                "w": 0, "h": 0})
+                                "w": int(fw), "h": int(fh)})
                     session.bytes_sent += len(frame)
                     self.on_frame_sent(session.bytes_sent)
                 last_frame = now
@@ -218,8 +257,16 @@ class HostServer:
         if mtype == "disconnect":
             self.sessions.end_active("ended")
         elif mtype == "input_event" and session.can_control:
-            from .input_control import InputController
-            InputController().apply_event(payload.get("event", {}))
+            event = payload.get("event", {})
+            if self.on_input_event is not None:
+                # Test hook: record the event instead of moving real hardware.
+                try:
+                    self.on_input_event(event)
+                except Exception:
+                    pass
+            else:
+                from .input_control import InputController
+                InputController().apply_event(event)
         elif mtype == "ping":
             self._send(conn, "pong", {})
 

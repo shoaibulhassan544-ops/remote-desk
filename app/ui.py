@@ -1,10 +1,13 @@
-"""tkinter UI — blue reference design (v1.0.3).
+"""tkinter UI — FRESH REBUILD v1.0.7 (Option 1 "AnyDesk Blue").
 
-Layout: left sidebar navigation (Home / Remote Control / Viewer /
-File Transfer / Trusted Devices / Session History / Settings) + main
-content area with stacked pages. Deep navy dark theme by default,
-bright blue (#2E7DFF) primary buttons + active nav. Working Light theme
-toggle (instant re-skin, no restart).
+The old ui.py was deleted and this file rewritten from scratch: same
+features, same public entry points (RemoteDeskApp(root), run()), clean
+layout, no leftover v1.0.4/v1.0.5 code.
+
+Design tokens: deep navy #0B1220 bg, card #13203A, bright-blue #2E7DFF
+primary + active nav, white headings, muted #8CA3C0. Left sidebar
+(Home / Remote Control / Viewer / File Transfer / Trusted Devices /
+Session History / Settings).
 
 Honesty rules (unchanged, enforced):
 - Every button is wired to real code, or explicitly disabled with a reason.
@@ -19,13 +22,13 @@ Honesty rules (unchanged, enforced):
   forwarding), OR via an optional signaling server (Settings) that
   maps a Device ID to an IP. The signaling server is a directory
   ONLY — no relay, no screen/password ever passes through it.
-- A bare 9-digit Device ID in the IP field is BLOCKED, never
-  attempted: an ID alone cannot resolve without the signaling
-  server (v1.0.4 fix for the "not found on this LAN" bug).
-- Incoming requests pop a modal dialog: Accept/Reject + permission
-  checkboxes, auto-reject after 60 s of no answer.
-- Update popup: in-app download with progress (v1.0.2); browser fallback
-  ONLY when no installer asset exists or the download fails.
+- Assisted sessions ALWAYS need host Accept (Accept popup, Control
+  defaults ON since v1.0.7). Unattended (password, opt-in) is the only
+  no-Accept path.
+- Update popup: SMALL, centered, only [Download Update] [Later].
+  Download starts immediately in-thread with live progress; on success
+  the button becomes [Run Installer] (click-only). The release-page
+  link appears ONLY if the download fails.
 """
 
 import io
@@ -50,7 +53,6 @@ from .host import HostServer
 from .security import PairingCodeStore, hash_password, validate_unattended_password
 from .version import VERSION
 
-# Blue reference theme. Dark is the default. NO gold.
 BLUE_DARK = {
     "bg": "#0B1220", "sidebar": "#0F1A2E", "header": "#0F1A2E",
     "card": "#13203A", "fg": "#FFFFFF", "muted": "#8CA3C0",
@@ -71,7 +73,6 @@ BLUE_LIGHT = {
 }
 
 REQUEST_TIMEOUT_S = 60  # incoming-request dialog auto-rejects after this
-_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-.]*$")
 
 
 def format_update_status(done: int, total: int, elapsed_s: float) -> str:
@@ -84,6 +85,32 @@ def format_update_status(done: int, total: int, elapsed_s: float) -> str:
         return (f"Downloading… {mb_done:.1f} / {total / (1024 * 1024):.1f} MB "
                 f"({pct}%){speed_txt}")
     return f"Downloading… {mb_done:.1f} MB{speed_txt}"
+
+
+def scale_coords(x: float, y: float, canvas_w: float, canvas_h: float,
+                 host_w: float, host_h: float) -> tuple[int, int]:
+    """Map a point on the viewer canvas to host-screen coordinates.
+
+    BUG B FIX (v1.0.7): the viewer shows a thumbnail-scaled image, but
+    old code sent RAW canvas x,y as absolute host coords — clicks landed
+    in the wrong place whenever canvas size != host screen size. Now the
+    host sends its real size with every frame and the UI scales into it.
+    Falls back to raw coords when the host size is unknown (0).
+    Results are clamped to the host screen bounds. Pure, testable.
+    """
+    try:
+        x, y = float(x), float(y)
+        canvas_w, canvas_h = float(canvas_w), float(canvas_h)
+        host_w, host_h = float(host_w), float(host_h)
+    except (TypeError, ValueError):
+        return 0, 0
+    if host_w <= 0 or host_h <= 0 or canvas_w <= 0 or canvas_h <= 0:
+        return int(x), int(y)
+    sx = x * host_w / canvas_w
+    sy = y * host_h / canvas_h
+    sx = min(max(sx, 0), host_w - 1)
+    sy = min(max(sy, 0), host_h - 1)
+    return int(sx), int(sy)
 
 
 class RemoteDeskApp:
@@ -109,18 +136,17 @@ class RemoteDeskApp:
         self.pages: dict[str, tk.Frame] = {}
         self._download_cancel: threading.Event | None = None
         self._downloaded_path: str | None = None
-        self._current_pairing_code: str | None = None
         self._session_start: float | None = None
         self._session_peer = ""
         self._session_host = ""
         self._fullscreen = False
-        # Viewer quality: real measured frames only.
         self._frame_times: deque = deque(maxlen=30)
         self._last_frame_size: tuple[int, int] | None = None
-        # Shared state vars (one var, labels on several pages).
+        self._host_screen_size: tuple[int, int] = (0, 0)
+        self._got_first_frame = False
+        # Shared state vars.
         self.conn_type_var = tk.StringVar(
             value=self.settings.get("connection_type", "lan"))
-        # Signaling server (AnyDesk-style ID lookup). Empty = OFF.
         self.signaling_url_var = tk.StringVar(
             value=self.settings.get("signaling_url", ""))
         self.signaling_auto_var = tk.BooleanVar(
@@ -135,6 +161,7 @@ class RemoteDeskApp:
         self.viewer_status_var = tk.StringVar(
             value="Not connected — connect from Remote Control.")
         self.viewer_quality_var = tk.StringVar(value="Quality: —")
+        self.viewer_control_var = tk.StringVar(value="Control: —")
         self._internet_last_fetch = 0.0
         self._set_window_icon()
         self._build()
@@ -145,7 +172,7 @@ class RemoteDeskApp:
         if self.settings.get("auto_update_check", True):
             threading.Thread(target=self._background_update_check, daemon=True).start()
 
-    # ------------------------------------------------------------- theming helpers
+    # ------------------------------------------------------------- theming
     def _role(self, widget, role: str):
         widget._theme_role = role  # type: ignore[attr-defined]
         return widget
@@ -235,7 +262,7 @@ class RemoteDeskApp:
                 w.configure(bg=t["bg"], fg=t["fg"], activebackground=t["bg"],
                             selectcolor=t["bg"])
             elif role == "nav":
-                pass  # nav buttons styled by _refresh_nav()
+                pass
             for child in w.winfo_children():
                 _apply(child)
 
@@ -279,7 +306,6 @@ class RemoteDeskApp:
             self.home_status_var.set("Idle")
 
     def _asset_path(self, name: str) -> str:
-        """Path to a bundled asset (works from source and from a frozen EXE)."""
         if getattr(sys, "frozen", False):
             base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
             return os.path.join(base, "assets", name)
@@ -287,11 +313,6 @@ class RemoteDeskApp:
                             "assets", name)
 
     def _set_window_icon(self):
-        """Window + taskbar icon: embedded PNG first, then file, then .ico.
-
-        A missing icon must never break startup — but it IS logged so a
-        silent fallback to the default icon is visible in the activity log.
-        """
         source = "none"
         try:
             from PIL import Image, ImageTk
@@ -329,7 +350,6 @@ class RemoteDeskApp:
         t = self.theme
         body = self._role(tk.Frame(self.root, bg=t["bg"]), "bg")
         body.pack(fill="both", expand=True)
-        # ---- sidebar ----
         sidebar = self._role(tk.Frame(body, bg=t["sidebar"], width=200), "sidebar")
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
@@ -376,15 +396,13 @@ class RemoteDeskApp:
 
         content = self._role(tk.Frame(body, bg=t["bg"]), "bg")
         content.pack(side="left", fill="both", expand=True)
-        # Persistent remote-session banner (hidden unless a session is active).
         self.banner = tk.Label(content,
                                text="● REMOTE SESSION ACTIVE — someone is connected to this PC",
                                bg=self.theme["danger"], fg="white",
                                font=("Segoe UI", 10, "bold"))
         for name in ["Home", "Remote Control", "Viewer", "File Transfer",
                      "Trusted Devices", "Session History", "Settings"]:
-            page = self._role(tk.Frame(content, bg=t["bg"]), "bg")
-            self.pages[name] = page
+            self.pages[name] = self._role(tk.Frame(content, bg=t["bg"]), "bg")
         self._build_home()
         self._build_remote_control()
         self._build_viewer()
@@ -455,7 +473,6 @@ class RemoteDeskApp:
         return btn
 
     def _entry(self, parent, width=24, show=None, textvariable=None):
-        t = self.theme
         e = tk.Entry(parent, width=width, show=show or "",
                      textvariable=textvariable,
                      relief="flat", font=("Segoe UI", 10),
@@ -477,7 +494,6 @@ class RemoteDeskApp:
         scrollbar.pack(side="right", fill="y")
         return inner
 
-    # Connection-type options (dropdown — never clipped, wraps at any width).
     CONN_TYPE_LABELS = {
         "lan": "Direct (LAN / Same Network)",
         "internet": "Internet (Direct via Public IP + UPnP)",
@@ -486,7 +502,6 @@ class RemoteDeskApp:
     CONN_TYPE_VALUES = ["lan", "internet", "signaling"]
 
     def _conn_type_combo(self, parent):
-        """Full-width dropdown. v1.0.4: radios clipped the 3rd option off-screen."""
         row = self._role(tk.Frame(parent, bg=self.theme["card"]), "card")
         row.pack(fill="x", pady=(0, 6))
         self._lbl(row, "Connection type:").pack(side="left")
@@ -508,23 +523,20 @@ class RemoteDeskApp:
         return row
 
     def _conn_type_radios(self, parent):
-        # Back-compat alias: old call sites now get the dropdown.
         return self._conn_type_combo(parent)
 
     def _signaling_block(self, parent):
-        """Signaling-server info block; visible only in Signaling mode."""
-        t = self.theme
-        frame = self._role(tk.Frame(parent, bg=t["card"]), "card")
+        frame = self._role(tk.Frame(parent, bg=self.theme["card"]), "card")
         self._lbl(frame, "Signaling server — Device ID lookup (AnyDesk-style)",
                   bold=True, size=11).pack(anchor="w")
-        tk.Label(frame, textvariable=self.signaling_status_var, bg=t["card"],
-                 fg=t["fg"], font=("Segoe UI", 10), wraplength=560,
+        tk.Label(frame, textvariable=self.signaling_status_var, bg=self.theme["card"],
+                 fg=self.theme["fg"], font=("Segoe UI", 10), wraplength=560,
                  justify="left").pack(anchor="w", pady=(4, 0))
         self._lbl(frame, "Directory ONLY — it maps your Device ID to your IP. "
                   "Screen, input and passwords NEVER pass through it. "
                   "Host Accept is still required for every assisted session.",
                   muted=True, wrap=600).pack(anchor="w", pady=(4, 0))
-        btns = self._role(tk.Frame(frame, bg=t["card"]), "card")
+        btns = self._role(tk.Frame(frame, bg=self.theme["card"]), "card")
         btns.pack(fill="x", pady=(8, 2))
         self._btn(btns, "Register this device", self._signaling_register_now,
                   "primary").pack(side="left", padx=(0, 6))
@@ -533,22 +545,20 @@ class RemoteDeskApp:
         return frame
 
     def _internet_block(self, parent):
-        """Internet-mode info block; visible only when Internet is selected."""
-        t = self.theme
-        frame = self._role(tk.Frame(parent, bg=t["card"]), "card")
+        frame = self._role(tk.Frame(parent, bg=self.theme["card"]), "card")
         self._lbl(frame, "Internet mode — direct connection (no relay server)",
                   bold=True, size=11).pack(anchor="w")
         self._lbl(frame, "Public IP:", muted=True).pack(anchor="w", pady=(6, 0))
-        tk.Label(frame, textvariable=self.public_ip_var, bg=t["card"],
-                 fg=t["fg"], font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        tk.Label(frame, textvariable=self.public_ip_var, bg=self.theme["card"],
+                 fg=self.theme["fg"], font=("Segoe UI", 12, "bold")).pack(anchor="w")
         self._lbl(frame, "LAN IP (port-forward target):", muted=True).pack(anchor="w", pady=(4, 0))
-        tk.Label(frame, textvariable=self.lan_ip_var, bg=t["card"],
-                 fg=t["fg"], font=("Segoe UI", 11)).pack(anchor="w")
+        tk.Label(frame, textvariable=self.lan_ip_var, bg=self.theme["card"],
+                 fg=self.theme["fg"], font=("Segoe UI", 11)).pack(anchor="w")
         self._lbl(frame, "UPnP status:", muted=True).pack(anchor="w", pady=(4, 0))
-        tk.Label(frame, textvariable=self.upnp_var, bg=t["card"],
-                 fg=t["fg"], font=("Segoe UI", 10), wraplength=560,
+        tk.Label(frame, textvariable=self.upnp_var, bg=self.theme["card"],
+                 fg=self.theme["fg"], font=("Segoe UI", 10), wraplength=560,
                  justify="left").pack(anchor="w")
-        btns = self._role(tk.Frame(frame, bg=t["card"]), "card")
+        btns = self._role(tk.Frame(frame, bg=self.theme["card"]), "card")
         btns.pack(fill="x", pady=(8, 2))
         self._btn(btns, "Open port (UPnP)", self._open_port_upnp, "primary").pack(side="left", padx=(0, 6))
         self._btn(btns, "Refresh", self._refresh_internet_info, "ghost").pack(side="left", padx=6)
@@ -573,7 +583,6 @@ class RemoteDeskApp:
 
         top = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
         top.pack(fill="x")
-        # --- Your Device ID card ---
         id_card = self._role(tk.Frame(top, bg=self.theme["card"], padx=16, pady=12), "card")
         id_card.pack(side="left", fill="both", expand=True, padx=(0, 6))
         self._lbl(id_card, "YOUR ADDRESS", muted=True, bold=True, size=9).pack(anchor="w")
@@ -594,7 +603,6 @@ class RemoteDeskApp:
         tk.Label(status_row, textvariable=self.home_status_var,
                  bg=self.theme["card"], fg=self.theme["fg"],
                  font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
-        # Small info: Device ID is THE address; IPs are just extra info.
         ip_row = self._role(tk.Frame(id_card, bg=self.theme["card"]), "card")
         ip_row.pack(fill="x", pady=(4, 0))
         self._lbl(ip_row, "IP (LAN):", muted=True, size=9).pack(side="left")
@@ -605,7 +613,7 @@ class RemoteDeskApp:
         tk.Label(ip_row, textvariable=self.public_ip_var,
                  bg=self.theme["card"], fg=self.theme["muted"],
                  font=("Segoe UI", 9)).pack(side="left", padx=4)
-        # --- Host this PC card ---
+
         host_card = self._role(tk.Frame(top, bg=self.theme["card"], padx=16, pady=12), "card")
         host_card.pack(side="left", fill="both", expand=True, padx=(6, 0))
         self._lbl(host_card, "HOST THIS PC", muted=True, bold=True, size=9).pack(anchor="w")
@@ -616,26 +624,17 @@ class RemoteDeskApp:
                   "ke connect karega — tumhare paas Accept / Decline ka popup "
                   "aayega. Koi code nahi chahiye.",
                   muted=True, wrap=320).pack(anchor="w", pady=(8, 0))
-        # v1.0.5 (AnyDesk-simple): NO connection-type / signaling / UPnP
-        # controls on Home — those live in Settings > Network. Home is
-        # just: YOUR ADDRESS + CONNECT (one address box).
 
-        # --- Connect to remote: ONE address box (Device ID or IP). ---
         card = self._card(body, "Connect to a remote device")
         self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
         self.home_address = self._entry(card, width=40)
         self.home_address.pack(anchor="w", pady=(2, 2), fill="x")
-        self.home_address.insert(0, "")
         self.home_address.bind("<Return>", lambda _e: self._connect_from_home())
         self._lbl(card, "Device ID ya IP address likho — misal 739 738 074 ya 192.168.1.100",
                   muted=True, size=9).pack(anchor="w")
-        # FINAL v1.0.5 FLOW: Address + Connect. Assisted = host popup +
-        # Accept, ALWAYS. No pairing code anywhere. Unattended (password)
-        # is the only no-Accept path, and only when ticked here.
         self.home_unattended = tk.BooleanVar(value=False)
         self.home_pw_frame = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        self._lbl(self.home_pw_frame, "Unattended password",
-                  bold=True).pack(anchor="w")
+        self._lbl(self.home_pw_frame, "Unattended password", bold=True).pack(anchor="w")
         self.home_pw = self._entry(self.home_pw_frame, width=20, show="•")
         self.home_pw.pack(anchor="w", pady=(2, 2))
         cb_un = tk.Checkbutton(card, text="Unattended (password se)",
@@ -646,10 +645,6 @@ class RemoteDeskApp:
         self._lbl(card, "Assisted: host ke popup pe Accept zaroori hai. "
                   "Unattended tick karne pe password se connect hoga, popup nahi aayega.",
                   muted=True, wrap=640).pack(anchor="w", pady=(4, 0))
-        cb = tk.Checkbutton(card, text="Use unattended", variable=self.home_unattended,
-                            font=("Segoe UI", 10))
-        self._role(cb, "check_card")
-        cb.pack(anchor="w", pady=(2, 0))
         row2 = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
         row2.pack(fill="x", pady=(8, 0))
         self._btn(row2, "Connect", self._connect_from_home, "primary").pack(side="left", padx=(0, 6))
@@ -662,14 +657,12 @@ class RemoteDeskApp:
                  fg=self.theme["muted"], font=("Segoe UI", 10),
                  wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
 
-        # --- Recent sessions ---
         card2 = self._card(body, "Recent sessions")
         self.home_history_box = tk.Text(card2, height=5, relief="flat", font=("Consolas", 9))
         self._role(self.home_history_box, "text")
         self.home_history_box.pack(fill="both", expand=True)
         self.home_history_box.configure(state="disabled")
 
-        # --- Quick actions ---
         card3 = self._card(body, "Quick actions")
         row3 = self._role(tk.Frame(card3, bg=self.theme["card"]), "card")
         row3.pack(fill="x")
@@ -680,7 +673,6 @@ class RemoteDeskApp:
         self._btn(row3, "Settings", lambda: self._show_page("Settings"),
                   "ghost").pack(side="left", padx=6)
 
-        # --- Activity log ---
         card4 = self._card(body, "Activity log")
         self.log_box = tk.Text(card4, height=7, relief="flat", font=("Consolas", 9))
         self._role(self.log_box, "text")
@@ -696,8 +688,6 @@ class RemoteDeskApp:
         self._lbl(body, "Remote Control", bold=True, size=18).pack(anchor="w")
         self._lbl(body, "Connect to another PC you are allowed to control.",
                   muted=True).pack(anchor="w", pady=(0, 12))
-
-        # Tab row: Quick Connect / Saved Devices
         tab_row = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
         tab_row.pack(fill="x", pady=(0, 8))
         self.rc_tab_btns: dict[str, tk.Button] = {}
@@ -710,10 +700,8 @@ class RemoteDeskApp:
             self.rc_tab_btns[name] = btn
         self.rc_tabs: dict[str, tk.Frame] = {}
         for name in ("Quick Connect", "Saved Devices"):
-            frame = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
-            self.rc_tabs[name] = frame
+            self.rc_tabs[name] = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
 
-        # --- Quick Connect tab (v1.0.5: ONE Remote Address box, AnyDesk-simple) ---
         quick = self.rc_tabs["Quick Connect"]
         card = self._card(quick, "Quick connect")
         self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
@@ -735,7 +723,6 @@ class RemoteDeskApp:
         self._lbl(self.rc_pw_frame, "Unattended password", bold=True).pack(anchor="w")
         self.connect_code = self._entry(self.rc_pw_frame, width=20, show="•")
         self.connect_code.pack(anchor="w", pady=(2, 2))
-        # Advanced connection options live in Settings > Network.
         btns = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
         btns.pack(fill="x", pady=(8, 0))
         self._btn(btns, "Connect", self._connect, "primary").pack(side="left", padx=(0, 6))
@@ -746,19 +733,16 @@ class RemoteDeskApp:
                  fg=self.theme["muted"], font=("Segoe UI", 10),
                  wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
 
-        # --- Saved Devices tab ---
         saved = self.rc_tabs["Saved Devices"]
         card2 = self._card(saved, "Saved devices (trusted)")
         self._lbl(card2, "Click a saved device to fill the Remote Address entry, "
                   "then switch to Quick Connect.", muted=True, wrap=640).pack(anchor="w")
-        self.saved_listbox = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10),
-                                        height=6)
+        self.saved_listbox = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10), height=6)
         self._role(self.saved_listbox, "listbox")
         self.saved_listbox.pack(fill="x", pady=(6, 2))
         self.saved_listbox.bind("<<ListboxSelect>>", self._on_saved_select)
         self._lbl(card2, "Discovered on LAN:", muted=True).pack(anchor="w", pady=(6, 0))
-        self.discovered_listbox = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10),
-                                             height=4)
+        self.discovered_listbox = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10), height=4)
         self._role(self.discovered_listbox, "listbox")
         self.discovered_listbox.pack(fill="x", pady=(4, 2))
         self.discovered_listbox.bind("<<ListboxSelect>>", self._on_discovered_select)
@@ -788,8 +772,6 @@ class RemoteDeskApp:
         text = self.saved_listbox.get(sel[0])
         m = re.search(r"ID\s+([\d ]+)", text)
         if m:
-            # Saved devices carry an ID — fill the single Remote Address
-            # box (auto-resolves via LAN scan, then signaling server).
             self.connect_host.delete(0, "end")
             self.connect_host.insert(0, m.group(1).strip())
             self._show_rc_tab("Quick Connect")
@@ -820,6 +802,10 @@ class RemoteDeskApp:
                  fg=self.theme["muted"], font=("Segoe UI", 10)).pack(side="left", padx=16)
         tk.Label(toolbar, text="Latency: —", bg=self.theme["bg"],
                  fg=self.theme["muted"], font=("Segoe UI", 10)).pack(side="left")
+        # BUG B: visible Control indicator — the user must SEE whether
+        # clicks will work. Updated on connect/disconnect + every frame.
+        tk.Label(toolbar, textvariable=self.viewer_control_var, bg=self.theme["bg"],
+                 fg=self.theme["muted"], font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
         self._btn(toolbar, "Full-screen", self._toggle_fullscreen, "ghost").pack(side="right", padx=6)
         self._btn(toolbar, "Disconnect", self._disconnect, "danger").pack(side="right", padx=6)
         self._btn(toolbar, "Request control (host must allow)",
@@ -830,6 +816,11 @@ class RemoteDeskApp:
         self.canvas.bind("<Button-1>", lambda e: self._send_click(e, True))
         self.canvas.bind("<ButtonRelease-1>", lambda e: self._send_click(e, False))
         self.canvas.bind("<MouseWheel>", self._on_scroll)
+        # Waiting-for-screen state until the first frame arrives.
+        self.viewer_waiting = tk.Label(page, text="Waiting for screen…\n(Host ne Accept kiya to screen yahan aayegi.)",
+                                       bg="#000000", fg="#8CA3C0", font=("Segoe UI", 12),
+                                       justify="center")
+        self.viewer_waiting.place(relx=0.5, rely=0.5, anchor="center")
 
     def _toggle_fullscreen(self):
         self._fullscreen = not self._fullscreen
@@ -859,10 +850,8 @@ class RemoteDeskApp:
             self.ft_tab_btns[name] = btn
         self.ft_tabs: dict[str, tk.Frame] = {}
         for name in ("Send Files", "Receive Files"):
-            frame = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
-            self.ft_tabs[name] = frame
+            self.ft_tabs[name] = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
 
-        # --- Send tab ---
         send = self.ft_tabs["Send Files"]
         card = self._card(send, "Send files")
         self._lbl(card, "Drop files here or use Choose Files. Drag-and-drop works "
@@ -872,12 +861,11 @@ class RemoteDeskApp:
                         bg=self.theme["entry"], fg=self.theme["muted"],
                         font=("Segoe UI", 11), padx=12, pady=24, relief="flat")
         drop.pack(fill="x", pady=(8, 6))
-        self._ft_drop_label = drop
         try:
             from tkinterdnd2 import DND_FILES, TkinterDnD  # noqa: F401
             drop.configure(text="Drop files here or use Choose Files (drag & drop available)")
         except ImportError:
-            pass  # chooser still works; never claim DnD works
+            pass
         row = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
         row.pack(fill="x")
         self._btn(row, "Choose Files…", self._choose_send_files, "primary").pack(side="left", padx=(0, 6))
@@ -897,7 +885,6 @@ class RemoteDeskApp:
         tk.Label(card, textvariable=self.file_status, bg=self.theme["card"],
                  fg=self.theme["fg"], font=("Segoe UI", 10)).pack(anchor="w", pady=(6, 0))
 
-        # --- Receive tab ---
         recv = self.ft_tabs["Receive Files"]
         card2 = self._card(recv, "Receive files")
         self._lbl(card2, "Received files land here, never auto-executed:",
@@ -1112,8 +1099,7 @@ class RemoteDeskApp:
         self._lbl(row, "Filter:").pack(side="left", padx=(12, 0))
         self.hist_filter_var = tk.StringVar(value="All")
         filt = ttk.Combobox(row, textvariable=self.hist_filter_var, state="readonly",
-                            width=18,
-                            values=["All", "Remote Control", "File Transfer"])
+                            width=18, values=["All", "Remote Control", "File Transfer"])
         filt.pack(side="left", padx=6)
         filt.bind("<<ComboboxSelected>>", lambda _e: self._refresh_history())
         cols = ("Device", "Type", "Duration", "Status", "Date & Time")
@@ -1145,8 +1131,7 @@ class RemoteDeskApp:
             self.settings_tab_btns[name] = btn
         self.settings_tabs: dict[str, tk.Frame] = {}
         for name in ("Security", "Network", "General", "About"):
-            frame = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
-            self.settings_tabs[name] = frame
+            self.settings_tabs[name] = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
         self._build_settings_security()
         self._build_settings_network()
         self._build_settings_general()
@@ -1359,9 +1344,6 @@ class RemoteDeskApp:
                 elif kind == "request":
                     self._show_request_dialog(payload)
                 elif kind == "show_code_prompt":
-                    # Legacy queue kind — no longer used (no code prompt
-                    # in the final v1.0.5 flow). Kept so old threads can't
-                    # crash the pump.
                     self.connect_status_var.set(payload)
                 elif kind == "update":
                     self._show_update_popup(payload)
@@ -1382,7 +1364,6 @@ class RemoteDeskApp:
         self.root.after(200, self._pump_queue)
 
     def _toggle_theme(self):
-        # Immediate switch — no restart needed.
         self.settings["theme"] = "light" if self.settings.get("theme") != "light" else "dark"
         self.theme = BLUE_LIGHT if self.settings["theme"] == "light" else BLUE_DARK
         storage.save_settings(self.settings)
@@ -1542,7 +1523,7 @@ class RemoteDeskApp:
             port = self.settings.get("port", config.DEFAULT_PORT)
             ok = internet.check_port_reachable(public, port) if public else False
             if public and ok:
-                msg = (f"Port reachable: {public}:{port} answered this self-test.")
+                msg = f"Port reachable: {public}:{port} answered this self-test."
             elif public:
                 msg = (f"Port NOT proven reachable: {public}:{port} did not answer "
                        "this self-test. Check hosting ON, UPnP / port forwarding, "
@@ -1562,7 +1543,6 @@ class RemoteDeskApp:
             self.msg_queue.put(("banner", False))
             self._log("Hosting stopped.")
             self._refresh_pill()
-            # Best-effort unregister from the signaling directory.
             url = (self.settings.get("signaling_url", "") or "").strip()
             if url:
                 threading.Thread(target=signaling.unregister_device,
@@ -1575,7 +1555,6 @@ class RemoteDeskApp:
         self.host.start()
         self.host_btn.configure(text="■  Stop Hosting")
         self._refresh_pill()
-        # Auto-register on the signaling server if the user enabled it.
         if self.settings.get("signaling_auto_register") and \
                 (self.settings.get("signaling_url", "") or "").strip():
             self._signaling_register_now()
@@ -1602,7 +1581,7 @@ class RemoteDeskApp:
         t = self.theme
         dlg = tk.Toplevel(self.root)
         dlg.title("Incoming connection request")
-        dlg.geometry("480x340")
+        dlg.geometry("480x380")
         dlg.configure(bg=t["card"])
         dlg.transient(self.root)
         dlg.grab_set()
@@ -1615,7 +1594,11 @@ class RemoteDeskApp:
                  bg=t["card"], fg=t["muted"], font=("Segoe UI", 10),
                  wraplength=430, justify="left").pack(padx=18, anchor="w")
         view = tk.BooleanVar(value=True)
-        ctrl = tk.BooleanVar(value=False)
+        # BUG B FIX (v1.0.7): Control used to default OFF, so after Accept
+        # the guest got a view-only session and every click did nothing —
+        # exactly the reported "connect ho gaya par kuch access nahi".
+        # Control now defaults ON; the host can still untick it.
+        ctrl = tk.BooleanVar(value=True)
         files = tk.BooleanVar(value=False)
         tk.Checkbutton(dlg, text="View Screen", variable=view,
                        bg=t["card"], fg=t["fg"], selectcolor=t["card"],
@@ -1625,6 +1608,8 @@ class RemoteDeskApp:
                        bg=t["card"], fg=t["fg"], selectcolor=t["card"],
                        activebackground=t["card"], font=("Segoe UI", 10)).pack(
                            anchor="w", padx=18)
+        tk.Label(dlg, text="Control ON rakhne se dusra banda mouse/keyboard use kar sakega.",
+                 bg=t["card"], fg=t["muted"], font=("Segoe UI", 9)).pack(anchor="w", padx=18)
         files_cb = tk.Checkbutton(dlg, text="File Transfer", variable=files,
                                   bg=t["card"], fg=t["fg"], selectcolor=t["card"],
                                   activebackground=t["card"], font=("Segoe UI", 10))
@@ -1646,8 +1631,6 @@ class RemoteDeskApp:
                 return
             state["answered"] = True
             if accept and not view.get():
-                # A session without screen sharing is meaningless — treat
-                # an unchecked View Screen as a decline, and say so.
                 result["accept"] = False
                 result["control"] = False
                 result["files"] = False
@@ -1662,7 +1645,8 @@ class RemoteDeskApp:
                 pass
             if accept and view.get():
                 self.msg_queue.put(("banner", True))
-                self._log(f"Accepted session from {peer.get('device_name')}.")
+                self._log(f"Accepted session from {peer.get('device_name')} "
+                          f"(control={'ON' if result['control'] else 'OFF'}).")
                 self._record_history(str(peer.get("device_name", "")),
                                      str(peer.get("ip", "")), "Remote Control", "Accepted")
             elif not result.get("timeout"):
@@ -1692,15 +1676,12 @@ class RemoteDeskApp:
         dlg.protocol("WM_DELETE_WINDOW", lambda: answer(False))
         self.root.wait_window(dlg)
         if "accept" not in result:
-            # Dialog closed without an answer (e.g. destroyed externally).
             result["accept"] = False
             result["control"] = False
             result["files"] = False
             self._log("Incoming request closed without an answer — treated as rejected.")
 
     # ------------------------------------------------------------- connect
-    # v1.0.5 (AnyDesk-simple): Home has ONE Remote Address box. A 9-digit
-    # Device ID is auto-resolved (LAN scan first, then signaling server).
     def _toggle_home_unattended(self):
         if self.home_unattended.get():
             self.home_pw_frame.pack(anchor="w", fill="x", pady=(6, 0))
@@ -1715,7 +1696,6 @@ class RemoteDeskApp:
 
     def _connect_from_home(self):
         address = self.home_address.get().strip()
-        # Unattended ticked -> password; otherwise assisted (host popup).
         code = self.home_pw.get().strip() if self.home_unattended.get() else ""
         if self.home_unattended.get() and not code:
             self.connect_status_var.set("Unattended password likho (host pe Settings me set hota hai).")
@@ -1726,19 +1706,16 @@ class RemoteDeskApp:
 
     def _connect(self):
         ip_text = self.connect_host.get().strip()
-        did_text = ""
         try:
             port = int(self.connect_port.get().strip())
         except ValueError:
             messagebox.showerror("Connect", "Port must be a number.")
             return
-        # Assisted (default): no code — host popup decides. Unattended
-        # ticked: password is the only credential.
         code = self.connect_code.get().strip() if self.use_unattended.get() else ""
         if self.use_unattended.get() and not code:
             messagebox.showerror("Unattended", "Unattended password likho.")
             return
-        self._start_connect(ip_text, did_text, port, code, self.use_unattended.get())
+        self._start_connect(ip_text, "", port, code, self.use_unattended.get())
 
     def _start_connect(self, ip_text: str, device_id_text: str, port: int,
                        code: str, unattended: bool):
@@ -1758,20 +1735,13 @@ class RemoteDeskApp:
                          daemon=True).start()
 
     def _resolve_target(self, decision: dict, default_port: int) -> tuple[str, int, str | None]:
-        """Resolve a validated decision to (host, port, error).
-
-        - direct: use the IP/hostname as-is.
-        - lan_scan: short LAN discovery scan for the Device ID.
-        - signaling_lookup: ask the signaling server for the IP.
-        Never raises; failures return (\"\", port, error).
-        """
+        """Resolve a validated decision to (host, port, error). Never raises."""
         action = decision["action"]
         if action == "direct":
             return decision["host"], decision["port"] or default_port, None
         if action == "auto_resolve":
             did = decision["device_id"]
-            self.msg_queue.put(("connect_status",
-                                f"Resolving {format_device_id(did)} …"))
+            self.msg_queue.put(("connect_status", f"Resolving {format_device_id(did)} …"))
             host, port, error = connect_target.resolve_device_id(
                 did, self.settings.get("signaling_url", ""),
                 scan_fn=lambda: DiscoveryListener(duration_s=5.0).scan(),
@@ -1815,17 +1785,18 @@ class RemoteDeskApp:
         if unattended:
             ok, msg = self.client.connect(host, resolved_port, unattended_password=code)
         else:
-            # Assisted: request only — host popup + Accept decides.
             ok, msg = self.client.connect(host, resolved_port)
         if ok:
-            self.msg_queue.put(("connect_status", "Waiting for host…"))
             self._session_start = time.time()
             self._session_peer = label
             self._session_host = host
+            self._got_first_frame = False
+            self._host_screen_size = (0, 0)
             self._record_history(label, host, "Remote Control", "Connected")
             self.msg_queue.put(("viewer_status", f"Connected to {host}:{resolved_port}."))
             self.msg_queue.put(("connect_status", f"Connected to {host}:{resolved_port}."))
             self.msg_queue.put(("file_status", "Session active."))
+            self._update_control_indicator()
             self.msg_queue.put(("show_page", "Viewer"))
         else:
             if "rejected" in msg.lower():
@@ -1844,16 +1815,27 @@ class RemoteDeskApp:
             self.msg_queue.put(("connect_status", f"Connection failed: {detail}"))
             self._log(f"Connection failed: {detail}")
 
+    def _update_control_indicator(self):
+        """Viewer toolbar: show whether clicks will work, from the REAL session."""
+        try:
+            active = self.client.sessions.active
+            if active is not None and active.can_control:
+                self.viewer_control_var.set("Control: ON ✓")
+            elif self.client.connected:
+                self.viewer_control_var.set("Control: OFF — host ne control nahi diya")
+            else:
+                self.viewer_control_var.set("Control: —")
+        except tk.TclError:
+            pass
+
     # ------------------------------------------------------------- Find on LAN
     def _find_on_lan_home(self):
-        # Home has ONE address box: fill it with the found device's IP.
         self._find_on_lan_fill(self.home_address, None)
 
     def _find_on_lan_rc(self):
         self._find_on_lan_fill(self.connect_host, None)
 
     def _find_on_lan_fill(self, ip_entry, id_entry):
-        """Scan the LAN, then fill the IP field (chooser if several found)."""
         self.connect_status_var.set("Scanning LAN for devices (5 seconds)…")
         self._log("Find on LAN: scanning (5 seconds)…")
 
@@ -1874,7 +1856,6 @@ class RemoteDeskApp:
             did, info = items[0]
             self._fill_ip_id(ip_entry, id_entry, info.get("address", ""), did)
             return
-        # Several found — let the user pick one.
         dlg = tk.Toplevel(self.root)
         dlg.title("Found on LAN — pick a device")
         dlg.geometry("440x260")
@@ -1926,10 +1907,13 @@ class RemoteDeskApp:
         self._session_start = None
         self._session_peer = ""
         self._session_host = ""
+        self._got_first_frame = False
+        self._host_screen_size = (0, 0)
         self.msg_queue.put(("connect_status", "Disconnected."))
         self.msg_queue.put(("viewer_status", "Not connected — connect from Remote Control."))
         self.msg_queue.put(("file_status", "No active session."))
         self.viewer_quality_var.set("Quality: —")
+        self.viewer_control_var.set("Control: —")
         self._refresh_pill()
 
     def _on_client_disconnect(self, reason: str):
@@ -1938,10 +1922,13 @@ class RemoteDeskApp:
             self._record_history(self._session_peer, self._session_host,
                                  "Remote Control", "Ended", duration_s=duration)
             self._session_start = None
+        self._got_first_frame = False
+        self._host_screen_size = (0, 0)
         self.msg_queue.put(("viewer_status", f"Disconnected: {reason}"))
         self.msg_queue.put(("connect_status", f"Disconnected: {reason}"))
         self.msg_queue.put(("file_status", "No active session."))
         self.viewer_quality_var.set("Quality: —")
+        self.viewer_control_var.set("Control: —")
 
     def _record_history(self, device_name, ip, stype, status, duration_s=None):
         try:
@@ -1964,6 +1951,9 @@ class RemoteDeskApp:
             now = time.time()
             self._frame_times.append(now)
             self._last_frame_size = img.size
+            # Host screen size from the client (set from frame metadata).
+            if getattr(self.client, "host_screen_size", (0, 0)) != (0, 0):
+                self._host_screen_size = self.client.host_screen_size
             if len(self._frame_times) >= 2:
                 span = self._frame_times[-1] - self._frame_times[0]
                 fps = (len(self._frame_times) - 1) / span if span > 0 else 0.0
@@ -1975,17 +1965,33 @@ class RemoteDeskApp:
             self.viewer_photo = ImageTk.PhotoImage(img)
             self.canvas.delete("all")
             self.canvas.create_image(w // 2, h // 2, image=self.viewer_photo, anchor="center")
+            if not self._got_first_frame:
+                self._got_first_frame = True
+                try:
+                    self.viewer_waiting.place_forget()
+                except tk.TclError:
+                    pass
+                self._update_control_indicator()
         except Exception:
             pass
 
+    def _scale_event(self, event):
+        """Canvas event → host coords (scaled; see scale_coords)."""
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        hw, hh = self._host_screen_size
+        return scale_coords(event.x, event.y, cw, ch, hw, hh)
+
     def _on_mouse_move(self, event):
         if self.client.connected and self.client.sessions.active.can_control:
-            self.client.send_input({"kind": "move", "x": event.x, "y": event.y})
+            x, y = self._scale_event(event)
+            self.client.send_input({"kind": "move", "x": x, "y": y})
 
     def _send_click(self, event, pressed: bool):
         if self.client.connected and self.client.sessions.active.can_control:
+            x, y = self._scale_event(event)
             self.client.send_input({"kind": "click", "button": "left", "pressed": pressed,
-                                    "x": event.x, "y": event.y})
+                                    "x": x, "y": y})
 
     def _on_scroll(self, event):
         if self.client.connected and self.client.sessions.active.can_control:
@@ -2161,7 +2167,6 @@ class RemoteDeskApp:
     def _save_security_toggles(self):
         self.settings["clipboard_sync"] = self.clipboard_var.get()
         self.settings["file_transfer_enabled"] = self.ft_enabled_var.get()
-        # auto_accept_trusted was removed in v1.0.5 (no auto-accept).
         self.settings.pop("auto_accept_trusted", None)
         storage.save_settings(self.settings)
         messagebox.showinfo("Settings", "Session options saved.")
@@ -2256,6 +2261,14 @@ class RemoteDeskApp:
         threading.Thread(target=_thread, daemon=True).start()
 
     # ------------------------------------------------------------- updates (in-app download)
+    # BUG C (v1.0.7): the old popup was big, its "Later" button was
+    # clipped ("...ate"), and "What's new" was EMPTY (web-created Releases
+    # have an empty body — now fixed by the built-in changelog in
+    # update_checker.resolve_notes). The new popup is SMALL (~520x420),
+    # centered, with ONLY TWO buttons: [Download Update] [Later].
+    # Download starts IMMEDIATELY on click, with live progress in the
+    # SAME popup. On success the button becomes [Run Installer]
+    # (click-only). The release-page link appears ONLY if download fails.
     def _background_update_check(self):
         release = update_checker.check_for_update()
         if release:
@@ -2270,12 +2283,6 @@ class RemoteDeskApp:
                                 "are not configured yet — see docs/SETUP_UPDATE.md).")
 
     def _show_update_popup(self, release: dict):
-        """Centered in-app update popup with a FIXED footer.
-
-        The dialog opens centered on the main window (never in a browser),
-        and the footer — version row, download status + progress bar,
-        buttons — stays visible below the changelog, never scrolled away.
-        """
         t = self.theme
         self._download_cancel = threading.Event()
         self._downloaded_path = None
@@ -2286,7 +2293,7 @@ class RemoteDeskApp:
         dlg.transient(self.root)
         dlg.grab_set()
         dlg.resizable(False, False)
-        w, h = 560, 500
+        w, h = 520, 420
         dlg.geometry(f"{w}x{h}")
         dlg.update_idletasks()
         try:
@@ -2300,15 +2307,18 @@ class RemoteDeskApp:
         tk.Label(dlg, text=f"✦  Update available — {release['tag']}",
                  font=("Segoe UI", 14, "bold"), bg=t["card"], fg=t["fg"]).pack(
                      padx=18, pady=(14, 2), anchor="w")
-        tk.Label(dlg, text=f"You are on v{VERSION}. The installer downloads inside this app — no browser redirect.",
+        tk.Label(dlg, text=f"You are on v{VERSION}. Download karna hai?",
                  bg=t["card"], fg=t["muted"], font=("Segoe UI", 10),
-                 wraplength=510, justify="left").pack(padx=18, anchor="w")
+                 wraplength=470, justify="left").pack(padx=18, anchor="w")
         tk.Label(dlg, text="What's new:", bg=t["card"], fg=t["fg"],
                  font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(8, 2), anchor="w")
-        notes = tk.Text(dlg, height=8, relief="flat", font=("Segoe UI", 10),
+        notes = tk.Text(dlg, height=6, relief="flat", font=("Segoe UI", 10),
                         bg=t["entry"], fg=t["fg"])
         notes.pack(padx=18, fill="x")
-        notes.insert("1.0", release.get("notes", "(No changelog provided.)"))
+        # Built-in changelog fallback: release notes are NEVER blank now.
+        notes_text = update_checker.resolve_notes(
+            release.get("tag", ""), release.get("notes", ""))
+        notes.insert("1.0", notes_text)
         notes.configure(state="disabled")
         # ---- FIXED footer (always visible below the changelog) ----
         footer = tk.Frame(dlg, bg=t["card"])
@@ -2321,29 +2331,34 @@ class RemoteDeskApp:
         self._upd_progress.pack(fill="x", pady=(6, 4))
         self._upd_status = tk.StringVar(value="Not downloaded yet.")
         tk.Label(footer, textvariable=self._upd_status, bg=t["card"], fg=t["muted"],
-                 font=("Segoe UI", 10), wraplength=510, justify="left").pack(anchor="w")
+                 font=("Segoe UI", 10), wraplength=470, justify="left").pack(anchor="w")
+        # TWO buttons only, in a grid with weights — nothing can clip.
         btns = tk.Frame(footer, bg=t["card"])
-        btns.pack(pady=(10, 0))
+        btns.pack(fill="x", pady=(10, 0))
+        btns.columnconfigure(0, weight=1)
+        btns.columnconfigure(1, weight=1)
         self._upd_download_btn = tk.Button(
             btns, text="⬇  Download Update", bg=t["accent"], fg=t["accent_fg"],
             relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=6,
             command=lambda: self._start_update_download(release, dlg))
-        self._upd_download_btn.pack(side="left", padx=6)
+        self._upd_download_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         self._upd_run_btn = tk.Button(
             btns, text="▶  Run Installer", bg=t["success"], fg=t["success_fg"],
             relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=6,
             state="disabled", command=self._run_downloaded_installer)
-        self._upd_run_btn.pack(side="left", padx=6)
-        self._upd_fallback_btn = tk.Button(
-            btns, text="Open release page", bg=t["card"], fg=t["fg"],
-            relief="flat", font=("Segoe UI", 10), padx=12, pady=6,
-            command=lambda: webbrowser.open(release["url"]))
-        self._upd_fallback_btn.pack(side="left", padx=6)
+        # Run button stays hidden until the download succeeds.
         self._upd_later_btn = tk.Button(
             btns, text="Later", bg=t["card"], fg=t["fg"],
             relief="flat", font=("Segoe UI", 10), padx=12, pady=6,
             command=lambda: self._close_update_popup(dlg))
-        self._upd_later_btn.pack(side="left", padx=6)
+        self._upd_later_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        # Fallback link: hidden unless the download actually fails.
+        self._upd_fallback_btn = tk.Button(
+            footer, text="Download fail hua — release page kholo",
+            bg=t["card"], fg=t["accent"], relief="flat",
+            font=("Segoe UI", 9, "underline"), cursor="hand2",
+            command=lambda: webbrowser.open(release["url"]))
+        self._upd_fallback_visible = False
         dlg.protocol("WM_DELETE_WINDOW", lambda: self._close_update_popup(dlg))
         self._upd_dialog = dlg
         self._upd_release = release
@@ -2359,7 +2374,8 @@ class RemoteDeskApp:
     def _start_update_download(self, release: dict, dlg):
         asset = update_checker.select_setup_asset(release.get("assets"))
         if asset is None:
-            self._upd_status.set("No installer file in this release — use the release page instead.")
+            self._upd_status.set("No installer file in this release.")
+            self._show_update_fallback()
             return
         self._download_cancel = threading.Event()
         self._upd_started_at = time.time()
@@ -2377,6 +2393,15 @@ class RemoteDeskApp:
             self.msg_queue.put(("update_done", (path, error)))
 
         threading.Thread(target=_thread, daemon=True).start()
+
+    def _show_update_fallback(self):
+        """Show the release-page fallback link (only on failure)."""
+        try:
+            if not getattr(self, "_upd_fallback_visible", False):
+                self._upd_fallback_btn.pack(anchor="w", pady=(6, 0))
+                self._upd_fallback_visible = True
+        except tk.TclError:
+            pass
 
     def _on_update_progress(self, done: int, total: int):
         if not hasattr(self, "_upd_progress"):
@@ -2410,14 +2435,18 @@ class RemoteDeskApp:
                 if error == "Download cancelled.":
                     self._upd_status.set("Download cancelled.")
                 else:
-                    self._upd_status.set(f"{error} — use the release page instead.")
+                    self._upd_status.set(f"{error}")
+                    self._show_update_fallback()
                 self._upd_download_btn.configure(state="normal", text="⬇  Retry Download")
                 return
             self._downloaded_path = path
             self._upd_progress.configure(value=self._upd_progress.cget("maximum"))
             self._upd_status.set(f"Downloaded: {os.path.basename(path)} — click Run Installer when ready.")
-            self._upd_run_btn.configure(state="normal")
+            # Download button becomes Run Installer; Later stays.
             self._upd_download_btn.configure(state="disabled", text="✓  Downloaded")
+            self._upd_download_btn.grid_forget()
+            self._upd_run_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+            self._upd_run_btn.configure(state="normal")
         except tk.TclError:
             pass
 

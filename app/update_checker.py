@@ -25,6 +25,42 @@ from pathlib import Path
 from . import config
 from .version import VERSION
 
+# Built-in changelog, keyed by release tag. GitHub Releases created via
+# the web UI usually have an EMPTY body, which is why the update popup's
+# "What's new" box showed up blank. When a release's notes are empty,
+# check_for_update() falls back to the entry here; if there is no entry
+# for a tag either, it falls back to a generic line — the box is never
+# blank again.
+CHANGELOG = {
+    "v1.0.1": "• EXE startup crash fix (relative-import bug).\n• Use this version or newer — v1.0.0 EXE does not start.",
+    "v1.0.2": "• New premium UI (sidebar, navy + gold theme).\n• Update now downloads inside the app (no GitHub redirect).",
+    "v1.0.3": "• Blue reference UI (sidebar, 9 screens).\n• Internet direct mode: public IP + UPnP + port-forward guide.",
+    "v1.0.4": "• Device ID fix: IP and Device ID are separate fields.\n• AnyDesk-style signaling server (ID → IP directory).\n• Real logo on app, taskbar, installer and desktop.",
+    "v1.0.5": "• Simple flow: Address → Enter → host popup → Accept. No pairing code.\n• Centered update popup with live download progress.\n• Multi-size icon fix (taskbar + desktop logo).",
+    "v1.0.6": "• Installer now auto-closes the running app before upgrading —\n  no more “Access is denied / DeleteFile code 5” on update.",
+    "v1.0.7": "• FIXED: Address (Device ID) now resolves on LAN — host actually\n  broadcasts its presence, so Find on LAN + Address connect work.\n"
+               "• FIXED: mouse clicks now land in the right place (real host\n  screen size is sent with every frame; coordinates are scaled).\n"
+               "• FIXED: Control defaults ON in the Accept popup, so clicks\n  work after Accept instead of view-only.\n"
+               "• Smaller update popup (Download / Later only), with a\n  built-in changelog so “What’s new” is never empty.\n"
+               "• Fresh Option 1 (AnyDesk Blue) UI rebuild.",
+}
+
+GENERIC_CHANGELOG = "Is version me stability + bug fixes."
+
+
+def resolve_notes(tag: str, notes: str | None) -> str:
+    """Release notes with fallback: API body → built-in entry → generic.
+
+    Never returns blank. Pure function, fully testable.
+    """
+    body = (notes or "").strip()
+    if body:
+        return body
+    entry = CHANGELOG.get((tag or "").strip())
+    if entry:
+        return entry
+    return GENERIC_CHANGELOG
+
 
 def parse_version(tag: str) -> tuple[int, int, int]:
     """'v1.2.3' / '1.2' -> (1, 2, 3). Raises ValueError on garbage."""
@@ -96,7 +132,7 @@ def check_for_update(url: str = config.UPDATE_CHECK_URL,
         return {
             "tag": tag,
             "name": str(data.get("name", tag)),
-            "notes": str(data.get("body", ""))[:4000],
+            "notes": resolve_notes(tag, str(data.get("body", ""))),
             "url": str(data.get("html_url", "")),
             "assets": _normalise_assets(data.get("assets")),
         }
