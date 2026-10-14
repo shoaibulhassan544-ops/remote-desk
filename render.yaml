@@ -1,0 +1,12 @@
+# Render deploy config for the RemoteDesk signaling server (v1.0.4+).
+# Render dashboard -> New + -> Web Service -> pick this repo.
+# The service is stdlib-only: no build step, no dependencies.
+services:
+  - type: web
+    name: remotedesk-signaling
+    env: python
+    buildCommand: ""
+    startCommand: python server/signaling_server.py --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SIGNALING_DATA_FILE
+        value: /tmp/signaling_registry.json
