@@ -8,32 +8,65 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
-## What it does (v1.0.2 — LAN MVP + VIP UI + in-app updates)
+## What it does (v1.0.3 — blue reference UI + Internet direct mode)
 
-- VIP sidebar UI (1000×680): Dashboard, Viewer, File Transfer, Trusted Devices,
-  History, Security, Diagnostics, Settings & About + header status pill
-  (Idle / Hosting ON / Connected) + instant dark/light theme toggle
-- Dashboard "How to connect — 4 steps" card: host → Start Hosting + pairing code,
-  note host IP + code, controller enters IP + port 47900 + code → Connect,
-  host clicks Accept. No username needed. Both PCs on the same Wi-Fi.
-- Assisted access: incoming request dialog (Accept/Reject + permission checkboxes)
-- Real screen streaming over TLS (mss + JPEG), viewer with mouse/keyboard input
-- Permission-gated file transfer (no traversal, never auto-executes)
-- Optional clipboard sync (off by default)
-- Trusted devices, session history, security settings, network diagnostics
-- **In-app update download with NO server**: the app checks GitHub Releases
-  for a newer version and shows a popup with changelog + progress bar;
-  [Download Update] downloads the installer inside the app to
-  `~/Downloads/RemoteDesk-Updates/`, then [Run Installer] (user-clicked only,
-  never auto-executed). Browser redirect is only a fallback when no installer
-  asset exists or the download fails.
-  See [docs/SETUP_UPDATE.md](docs/SETUP_UPDATE.md).
+- Blue reference UI (1000×680): sidebar Home / Remote Control / Viewer /
+  File Transfer / Trusted Devices / Session History / Settings; deep navy
+  `#0B1220` background, card `#13203A`, bright-blue `#2E7DFF` primary
+  buttons + active nav (no gold), instant dark/light theme toggle
+- Home: "Welcome Back!", Your Device ID card (formatted, Copy button),
+  real OS label, host card (Start Hosting + pairing code), Connect box
+  (Device ID / IP + pairing code), Recent Sessions from real history,
+  Quick Actions, activity log, "Developed by Shoaib Azeez" footer
+- Remote Control: Quick Connect / Saved Devices tabs, connection-type
+  radios (LAN / Internet), prominent blue Connect, actionable errors
+  (e.g. "Host not reachable at X:47900 — check hosting ON, same Wi-Fi
+  for LAN, or Public IP + port mapping for Internet"), Port, pairing
+  code, unattended checkbox, Disconnect, Scan LAN
+- **Internet (direct) mode, no relay server:** host shows Public IP +
+  LAN IP + UPnP status + "Open port (UPnP)" + copyable "Public IP +
+  Port + Pairing code" line + port-forward guide. The controller
+  connects with the same direct TCP/TLS path to the public IP. Works
+  when UPnP succeeds or port forwarding is set; strict / CGNAT routers
+  need a relay server, which is NOT included — the app says so instead
+  of claiming otherwise.
+- Incoming request dialog: requesting device name + ID + IP, View
+  Screen / Control / File Transfer checkboxes, Accept (green) /
+  Decline (red), **auto-reject after 60 s** with a log line
+- Viewer toolbar: Connected status, quality from real measured frame
+  size + fps (else "—"), latency "—" (no round-trip measurement in the
+  protocol — never a fake ms number), Full-screen, red Disconnect
+- File Transfer: Send / Receive tabs; chooser works, destination
+  selector from trusted + history; **Send is NOT wired in this build —
+  the Send button says so plainly and sends nothing**; Receive lists
+  the real download folder ("never auto-executed")
+- Trusted Devices: Add (ID + name) / Rename / Remove (revoke) +
+  Unattended Access section (enable toggle + password, hash-only)
+- Session History: real table (Device, Type, Duration, Status,
+  Date & Time) with search-by-name + All / Remote Control / File
+  Transfer filter
+- Settings: Security / Network / General / About tabs — Change Access
+  Password (hash-only), **2FA toggle DISABLED with "not implemented in
+  this build"** (no fake 2FA), clipboard + file-transfer toggles,
+  connection-type default, port, UPnP status, Public IP, port-reachable
+  self-test, diagnostics (incl. Internet checks), download folder,
+  theme toggle, auto-update toggle, About + Check for Updates
+- In-app update download (unchanged from v1.0.2): popup downloads the
+  installer inside the app with progress bar; Run Installer only on
+  user click; browser fallback only when no installer asset exists or
+  the download fails. See [docs/SETUP_UPDATE.md](docs/SETUP_UPDATE.md).
 
-## What it does NOT do in v1.0.2
+## What it does NOT do in v1.0.3
 
-- **No internet relay.** Internet mode needs port-forward/VPN or a deployed
-  STUN/TURN relay (see [docs/TURN-DEPLOYMENT.md](docs/TURN-DEPLOYMENT.md)).
-  The included `server/signaling_stub.py` is a dev-only stub, not a relay.
+- **No internet relay / signaling server.** Internet mode is direct TCP
+  to the host's public IP (UPnP or manual port forwarding). If both
+  fail (strict / CGNAT router), a relay server would be needed and is
+  NOT included. The included `server/signaling_stub.py` is a dev-only
+  stub, not a relay.
+- **No file send over a live session yet** (chooser + queue UI exist;
+  Send reports "not wired" honestly). The chunked protocol + traversal
+  checks exist at module level.
+- **No two-factor authentication** (toggle present but disabled, labeled).
 - No two-Windows-PC live test yet (see docs/TEST-REPORT.md — blocked item).
 
 ## Quick start (Windows)
