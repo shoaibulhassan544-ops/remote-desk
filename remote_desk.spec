@@ -10,7 +10,7 @@ a = Analysis(
     ['run.py'],
     pathex=[os.path.abspath('.')],
     binaries=[],
-    datas=[],
+    datas=[('assets/icon.png', 'assets')],  # window/taskbar icon at runtime
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
@@ -28,5 +28,5 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,  # windowed GUI app
-    icon=None,
+    icon='assets/icon.ico',  # EXE + taskbar icon
 )

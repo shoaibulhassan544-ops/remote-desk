@@ -4,7 +4,7 @@
 ; Version is read from the app at build time — update app/version.py, then rebuild.
 
 #define MyAppName "RemoteDesk"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "Shoaib Azeez"
 #define MyAppExeName "RemoteDesk.exe"
 
@@ -20,6 +20,10 @@ OutputBaseFilename=Setup-RemoteDesk-{#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=assets\icon.ico
+WizardImageFile=assets\installer_banner.bmp
+WizardSmallImageFile=assets\installer_small.bmp
+UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64
 

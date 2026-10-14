@@ -8,6 +8,34 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
+## What it does (v1.0.4 — Device-ID bug fix + signaling server + branding)
+
+- **BUG FIX — a Device ID alone never connected (the screenshot bug).**
+  The old Connect box said "Device ID or IP", but a 9-digit ID cannot
+  resolve without a directory, so typing one only produced
+  "not found on this LAN". In v1.0.4 the IP and Device ID are **separate
+  fields**: the IP field **rejects** a bare 9-digit ID with a clear
+  error, and a Device ID connects **only** via Signaling Server mode
+  (or a LAN scan). A **Find on LAN** button scans and fills the IP in.
+- **Signaling server (AnyDesk-style ID connect).** New
+  `server/signaling_server.py` (stdlib only): `POST /register`,
+  `GET /lookup`, `POST /unregister`, `GET /health`. It is a **directory
+  only** — no relay, no passwords, no screen traffic. Deploy free on
+  Render (`render.yaml` included) or any VPS — see
+  [docs/SIGNALING_DEPLOY.md](docs/SIGNALING_DEPLOY.md). Settings →
+  Network → Signaling server: paste the URL on both PCs; connection
+  type → "Internet (via Signaling Server)". Without a server,
+  Device IDs cannot resolve — use Direct IP.
+- **Connection-type dropdown** (was radios — the 3rd option clipped
+  off-screen in the screenshot): LAN / Internet direct / Internet via
+  Signaling Server. Full-width, never clipped. Connection progress
+  states: Resolving… → Connecting… → Waiting for host… → Connected.
+- **Branding:** real logo (`assets/icon.png` / `icon.ico` — deep-blue
+  rounded square + white monitor + blue double-arrow) wired to the
+  window + taskbar icon, the EXE icon, the installer icon, and the
+  Inno Setup wizard images (`installer_banner.bmp`,
+  `installer_small.bmp`). "Developed by Shoaib Azeez" unchanged.
+
 ## What it does (v1.0.3 — blue reference UI + Internet direct mode)
 
 - Blue reference UI (1000×680): sidebar Home / Remote Control / Viewer /
@@ -56,13 +84,16 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
   user click; browser fallback only when no installer asset exists or
   the download fails. See [docs/SETUP_UPDATE.md](docs/SETUP_UPDATE.md).
 
-## What it does NOT do in v1.0.3
+## What it does NOT do in v1.0.4
 
-- **No internet relay / signaling server.** Internet mode is direct TCP
-  to the host's public IP (UPnP or manual port forwarding). If both
-  fail (strict / CGNAT router), a relay server would be needed and is
-  NOT included. The included `server/signaling_stub.py` is a dev-only
-  stub, not a relay.
+- **No internet relay.** The signaling server is a directory only —
+  it hands out IPs, it does not proxy sessions. If direct TCP cannot
+  reach the host (strict / CGNAT router, no UPnP, no port forwarding),
+  a relay server would be needed and is NOT included. The included
+  `server/signaling_stub.py` is a dev-only stub, not a relay.
+- **Signaling server is NOT hosted for you.** You deploy it yourself
+  (Render free tier / VPS) and paste the URL into both PCs. Until you
+  do, Device-ID connect is unavailable and Direct IP is the way.
 - **No file send over a live session yet** (chooser + queue UI exist;
   Send reports "not wired" honestly). The chunked protocol + traversal
   checks exist at module level.
@@ -99,6 +130,7 @@ GitHub Release (which is what triggers clients' update popup).
 | docs/TEST-REPORT.md | Honest test status |
 | docs/SETUP_UPDATE.md | Publish an update so clients get the popup (no server) |
 | docs/TURN-DEPLOYMENT.md | coturn STUN/TURN deployment (no real secrets) |
+| docs/SIGNALING_DEPLOY.md | Deploy the signaling server (Render / VPS) + curl tests |
 | docs/TROUBLESHOOTING.md | Fixes for common failures |
 | docs/RELEASE-CHECKLIST.md | Release gate |
 | docs/KNOWN-LIMITATIONS.md | Limitations + security notes |
