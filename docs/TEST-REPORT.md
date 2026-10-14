@@ -1,3 +1,67 @@
+# TEST REPORT — RemoteDesk v1.0.7 (honest status)
+
+## v1.0.7 addendum (this session) — 3 REAL bug fixes + fresh UI + installer hardening
+- **BUG A — Address never resolved on LAN (ROOT CAUSE FOUND):**
+  `DiscoveryBroadcaster` was NEVER instantiated in `app/host.py` — the
+  host never announced itself, so LAN scan found nothing and a Device ID
+  could never resolve. FIX: `HostServer.start()` starts the broadcaster
+  (LAN broadcast + loopback, presence-only); `stop()` stops it
+  (guarded, idempotent); broadcast failure logs + hosting continues.
+  ALSO FOUND: `start()` returned before the server was listening, so an
+  immediate connect raced first-run TLS keygen → "Connection refused".
+  FIX: `start()` waits on a `_ready` event set after `listen()` (or on
+  definitive failure). ALSO FOUND: `DiscoveryBroadcaster` overrode
+  `threading.Thread._stop()` with an Event (broke `join()`); renamed to
+  `_stop_event`. ALSO FOUND: this sandbox blocks UDP *send* (EPERM),
+  so the real-UDP test skips here with a clear reason; packet contents,
+  targets, and listener parsing are proven with injected fake sockets
+  (and the real-UDP test still runs on Windows / GitHub Actions).
+- **BUG B — IP connected but no access (ROOT CAUSES FOUND):** (1) Accept
+  dialog Control checkbox defaulted OFF → view-only, clicks did nothing.
+  FIX: Control defaults ON (host can still untick), View ON, Files OFF,
+  with an explanatory label. (2) Viewer sent RAW canvas coords while the
+  host applied them as absolute screen coords, and the host sent
+  `w: 0, h: 0` → clicks landed in the wrong place. FIX: host sends real
+  screen size in every `screen_frame`; client stores it; UI scales
+  canvas → host coords and clamps to host bounds. (3) Frame flow proven
+  by LOOPBACK test: host + client in-process on 127.0.0.1, auto-accept
+  (control=True) → client received frames AND an input event reached
+  the host (test hook, real mouse never moved). Viewer: "Waiting for
+  screen…" until first frame + visible "Control: ON/OFF" indicator.
+- **BUG C — update popup broken (ROOT CAUSES FOUND):** "What's new"
+  empty because web-created Releases have an EMPTY body → built-in
+  `CHANGELOG` map in `update_checker.py` (API body → built-in → generic
+  line; never blank). "Later" clipped → buttons in a grid with weights
+  + padding, popup ~520×420, ONLY [Download Update] [Later]; Download
+  starts immediately in-thread with live progress; on success the button
+  becomes [Run Installer]; release-page link only as a tiny fallback
+  if the download fails.
+- **FRESH UI REBUILD:** `app/ui.py` deleted and rewritten from scratch
+  (same entry points `RemoteDeskApp(root)`, `run()`), Option 1 AnyDesk
+  Blue tokens, no leftover v1.0.4/v1.0.5 layout code. All logic reused
+  from `app/*` — protocol/security untouched.
+- **Installer hardening (v1.0.7):** `setup.iss` ships `icon.ico` into
+  `{app}` + `IconFilename="{app}\icon.ico"` on BOTH shortcuts; `[Code]`
+  `CurStepChanged` silently force-closes `RemoteDesk.exe` via
+  `taskkill /F` at `ssInstall` (errors ignored) alongside the v1.0.6
+  Restart Manager lines; CI "Verify EXE icon" step (pefile,
+  RT_GROUP_ICON=14 + RT_ICON=3) FAILS the build if the EXE has no icon
+  resources. `icon.ico` rebuilt with 16/24/32/48/64/128/256 (24 was
+  missing before).
+- **Verified this session:** `python3 -m pytest -q` → **103 passed,
+  1 skipped** (79 pre-v1.0.7 + 25 new: discovery broadcast ×5,
+  coordinate scaling ×5, loopback session ×2, update popup small ×6,
+  setup.iss ×7); `python3 run.py --version` → `1.0.7`;
+  `python3 -m py_compile app/*.py` OK; Xvfb headless smoke test OK
+  (build app, switch all pages, open update popup — small, two
+  buttons, no clipping — no exceptions).
+- **NOT yet verified:** real Windows GUI, real 2-PC LAN/signaling test,
+  real Windows upgrade run with the app running (installer taskkill
+  path), in-app download vs a real Release. Real-UDP discovery test
+  skipped in this sandbox (UDP send blocked) — must run on Windows.
+
+---
+
 # TEST REPORT — RemoteDesk v1.0.3 (honest status)
 
 ## v1.0.3 addendum (this session)

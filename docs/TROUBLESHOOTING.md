@@ -1,4 +1,32 @@
-# Troubleshooting — RemoteDesk v1.0.0
+# Troubleshooting — RemoteDesk v1.0.7
+
+## "Address pe connect nahi ho raha, IP pe ho raha hai" (fixed in v1.0.7)
+- ROOT CAUSE (pre-v1.0.7): the host never broadcast its presence
+  (`DiscoveryBroadcaster` was never started), so LAN scan found nothing
+  and a Device ID could never resolve on LAN.
+- Fix in v1.0.7: hosting now broadcasts presence (LAN + loopback).
+  Make sure BOTH PCs run v1.0.7+, hosting is ON on the host, and both
+  are on the same Wi-Fi/LAN. If LAN scan still finds nothing (some
+  routers block UDP broadcasts), type the host's IP directly, or use
+  the signaling server (docs/SIGNALING_DEPLOY.md) on both PCs.
+
+## "IP pe connect ho gaya par screen / mouse / folders / full access nahi" (fixed in v1.0.7)
+- ROOT CAUSES (pre-v1.0.7): (1) the host's Accept popup had Control
+  defaulted OFF → the session was view-only and clicks did nothing.
+  (2) The viewer sent raw canvas coords while the host treated them as
+  absolute screen coords → clicks landed in the wrong place.
+- Fix in v1.0.7: Control defaults ON in the Accept popup (host can
+  still untick it), and clicks are scaled to the host's real screen
+  size. If clicks still do nothing: check the viewer toolbar shows
+  "Control: ON" — if it says OFF, the host unticked Control; reconnect
+  and have the host keep Control ON when Accepting.
+
+## Update popup: empty "What's new" / clipped "Later" button (fixed in v1.0.7)
+- ROOT CAUSE: GitHub Releases created via the web UI have an EMPTY
+  body, so the popup showed a blank box; the old popup layout also
+  clipped the Later button at the edge.
+- Fix in v1.0.7: small popup (~520×420) with ONLY [Download Update]
+  [Later], and a built-in changelog so "What's new" is never blank.
 
 ## "Could not connect to <host>:<port>"
 - Is the host PC's app open with **Hosting ON**? (Dashboard → Start Hosting)
@@ -42,7 +70,12 @@
   every time. The only no-Accept path is Unattended (password, opt-in).
 
 ## Taskbar / desktop icon still shows the old (default) icon
-- v1.0.5 ships a multi-size icon (16–256) + desktop icon ON by default.
+- v1.0.7 ships a multi-size icon (16/24/32/48/64/128/256) + desktop icon
+  ON by default. The installer now ships `icon.ico` as a file and BOTH
+  shortcuts point at it directly (`IconFilename`), so the desktop icon
+  shows our logo even if EXE embedding ever fails. The CI build FAILS
+  if the EXE has no icon resources, so a bad icon can never ship
+  silently again.
 - If Windows still shows the old icon after an upgrade: **uninstall the
   old version first**, then install the new one. Windows caches icons —
   clear the cache (`ie4uinit.exe -show` in Run), log out/in, and
@@ -54,6 +87,10 @@
   because the new version never actually got installed.
 - v1.0.6+ fix: the installer auto-closes the running app (Restart
   Manager) before replacing files, so this should not happen anymore.
+- v1.0.7+ fix: on top of Restart Manager, the installer now silently
+  force-closes `RemoteDesk.exe` (`taskkill /F`, errors ignored) right
+  before files are replaced — fully automatic, no popup, even if the
+  Restart Manager dialog would have appeared.
 - If it still happens on an older installer: close RemoteDesk fully
   (right-click its tray icon → Exit, or Task Manager → End task on
   RemoteDesk.exe), or uninstall the old version first, then install.

@@ -1,4 +1,11 @@
-# UI/UX & Screen Flow — RemoteDesk v1.0.5 (Option 1 AnyDesk Blue, final flow)
+# UI/UX & Screen Flow — RemoteDesk v1.0.7 (Option 1 AnyDesk Blue, final flow)
+
+v1.0.7: `app/ui.py` was DELETED and rewritten FRESH from scratch in the
+same Option 1 tokens (no leftover v1.0.4/v1.0.5 layout code). Changes vs
+v1.0.5: Accept popup Control defaults ON (was OFF); viewer shows
+"Waiting for screen…" until the first frame + a "Control: ON/OFF"
+indicator; update popup is SMALL (~520×420) with only
+[Download Update] [Later] and a built-in changelog fallback.
 
 Style (v1.0.3): professional dark-mode desktop app matching the reference
 look. Window 1000×680, minsize 860×600. Left sidebar navigation (fixed
@@ -68,9 +75,14 @@ no fake 2FA, no fake signaling server.
   Full-screen button (toggles via `root.attributes("-fullscreen", …)`,
   Esc exits), red Disconnect, "Request control (host must allow)" note.
 - States driven by real client state: "Connecting…" via status line,
-  live frames, "Not connected — connect from Remote Control."
+  "Waiting for screen…" until the first frame arrives, then live frames,
+  "Not connected — connect from Remote Control."
 - Black canvas showing live JPEG frames (scaled to window).
-- Mouse move/click/scroll forwarded ONLY when control is granted.
+- Toolbar shows a visible "Control: ON/OFF" indicator so the user can
+  SEE whether clicks will work.
+- Mouse move/click/scroll are scaled from canvas coords → the host's
+  real screen size (sent with every frame) and clamped to host bounds,
+  forwarded ONLY when control is granted.
 
 ### 4. File Transfer
 - Tabs: Send Files / Receive Files.
@@ -126,21 +138,24 @@ no fake 2FA, no fake signaling server.
 ## Dialogs (modal)
 - **Incoming Connection Request:** requesting device name + ID + IP,
   "Only accept if you know and trust this person", checkboxes
-  (View Screen — checked, enabled; Control (Mouse & Keyboard);
-  File Transfer — disabled with a note when File Transfer is off in
-  Settings), Accept (green) / Decline (red). TIMEOUT: no answer in 60 s
-  → auto-reject + log line + dialog closes. Unchecking View Screen on
-  Accept is treated as a decline (a session without screen sharing is
-  meaningless) and logged as such.
-- **Update available (in-app download):** new version tag, changelog,
-  progress bar + status line, buttons:
+  (View Screen — checked ON, enabled; Control (Mouse & Keyboard) —
+  checked ON by default in v1.0.7, host can still untick it, with the
+  label "Control ON rakhne se dusra banda mouse/keyboard use kar
+  sakega"; File Transfer — OFF by default, disabled with a note when
+  File Transfer is off in Settings), Accept (green) / Decline (red).
+  TIMEOUT: no answer in 60 s → auto-reject + log line + dialog closes.
+  Unchecking View Screen on Accept is treated as a decline (a session
+  without screen sharing is meaningless) and logged as such.
+- **Update available (in-app download), SMALL popup ~520×420:** new
+  version tag, changelog (built-in fallback when the Release body is
+  empty — never blank), progress bar + status line, ONLY TWO buttons:
   [Download Update] → downloads the `Setup-RemoteDesk-*.exe` asset inside
   the app (threaded, live progress, cancellable by closing the dialog) to
   `~/Downloads/RemoteDesk-Updates/` →
-  on success [Run Installer] becomes enabled and launches the downloaded
-  file ONLY on user click (never auto-executes) + [Later].
-  If no installer asset exists or the download fails: status shows the
-  error and [Open release page] (browser) is the fallback, with a note why.
+  on success the button becomes [Run Installer] and launches the
+  downloaded file ONLY on user click (never auto-executes) + [Later]
+  stays. If the download fails: status shows the error and a tiny
+  "Open release page" text-link appears as the fallback, with a note why.
 
 ## Screen flow
 ```
