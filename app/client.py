@@ -33,7 +33,12 @@ class RemoteClient:
 
     def connect(self, host: str, port: int, pairing_code: str = "",
                 unattended_password: str = "") -> tuple[bool, str]:
-        """Connect + authenticate. Returns (ok, message). Blocking (<= ~15s)."""
+        """Connect + authenticate. Returns (ok, message). Blocking (<= ~15s).
+
+        Assisted (default): sends method "request" — no code. The host
+        shows the Accept/Reject popup and decides. Unattended: password
+        only, no popup (opt-in, host-enabled).
+        """
         if self.connected:
             return False, "Already connected. Disconnect first."
         try:
@@ -41,7 +46,7 @@ class RemoteClient:
                                            timeout=config.CONNECT_TIMEOUT_S)
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE  # identity via pairing/unattended auth
+            ctx.verify_mode = ssl.CERT_NONE  # identity via host Accept (assisted) or unattended password
             conn = ctx.wrap_socket(raw, server_hostname=host)
         except (OSError, ssl.SSLError, ValueError) as exc:
             return False, f"Could not connect to {host}:{port}: {exc}"
@@ -53,7 +58,8 @@ class RemoteClient:
             if unattended_password:
                 auth = {"method": "unattended", "password": unattended_password}
             else:
-                auth = {"method": "pairing", "code": pairing_code}
+                auth = {"method": "request", "device_id": self.device_id,
+                        "device_name": self.device_name}
             self._send("auth", auth)
             reply = self._read_message(buf)
         except (OSError, ValueError) as exc:

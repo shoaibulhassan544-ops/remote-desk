@@ -2,7 +2,7 @@
 
 Flow:
 1. Listen on TCP port (default 47900) with TLS (per-device self-signed cert).
-2. Guest sends hello (device ID + name), then auth (pairing code OR
+2. Guest sends hello (device ID + name), then auth (assisted request OR
    unattended password — only if unattended is enabled).
 3. Pairing/unattended check passes -> the HOST UI is asked via
    `on_request(peer)` callback: Accept/Reject + control/file permissions.
@@ -17,7 +17,7 @@ import ssl
 import threading
 import time
 
-from . import config, protocol, screen, security
+from . import config, protocol, screen, security, storage
 from .session import Session, SessionManager
 
 
@@ -126,22 +126,25 @@ class HostServer:
             if auth is None or auth.get("type") != "auth":
                 self._send(conn, "error", {"message": "Expected auth."})
                 return
-            ok, reason = self._check_auth(auth.get("payload", {}))
+            method = auth.get("payload", {}).get("method")
+            ok, reason = self._check_auth(auth.get("payload", {}), peer_id)
             if not ok:
                 self._send(conn, "auth_failed", {"reason": reason})
                 self.sessions.log("auth_failed", peer_id, reason)
                 return
-            # Assisted consent: host human must Accept.
-            if auth.get("payload", {}).get("method") != "unattended":
+            # FINAL v1.0.5 FLOW: assisted sessions ALWAYS need host Accept.
+            # No pairing code, no auto-accept (not even for trusted devices).
+            # The ONLY no-Accept path is unattended, password-protected.
+            if method == "unattended":
+                allow_control = bool(self.settings.get("unattended_allow_control"))
+                allow_files = False
+            else:
                 accept, allow_control, allow_files = self.on_request(
                     {"device_id": peer_id, "device_name": peer_name, "ip": peer_ip})
                 if not accept:
                     self._send(conn, "auth_failed", {"reason": "Host rejected the request."})
                     self.sessions.log("session_rejected", peer_id, "Host rejected")
                     return
-            else:
-                allow_control = bool(self.settings.get("unattended_allow_control"))
-                allow_files = False
             session = Session(session_id=f"s-{int(time.time())}",
                               peer_device_id=peer_id, peer_device_name=peer_name,
                               direction="incoming")
@@ -163,10 +166,13 @@ class HostServer:
                 pass
             self._conn = None
 
-    def _check_auth(self, payload: dict) -> tuple[bool, str]:
+    def _check_auth(self, payload: dict, peer_id: str = "") -> tuple[bool, str]:
         method = payload.get("method")
-        if method == "pairing":
-            return self.pairing.verify(str(payload.get("code", "")))
+        if method == "request":
+            # Assisted request: no code. The host's Accept/Reject popup
+            # decides. (Pairing codes were removed from the assisted flow
+            # in v1.0.5; PairingCodeStore is kept only for compatibility.)
+            return True, "OK"
         if method == "unattended":
             if not self.settings.get("unattended_enabled"):
                 return False, "Unattended access is disabled on this device."

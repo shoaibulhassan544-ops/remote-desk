@@ -74,6 +74,18 @@ REQUEST_TIMEOUT_S = 60  # incoming-request dialog auto-rejects after this
 _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-.]*$")
 
 
+def format_update_status(done: int, total: int, elapsed_s: float) -> str:
+    """'Downloading… 4.2 / 21.3 MB (20%) • 1.1 MB/s' (pure, testable)."""
+    mb_done = max(done, 0) / (1024 * 1024)
+    speed = (done / elapsed_s) if elapsed_s > 0 else 0.0
+    speed_txt = f" • {speed / (1024 * 1024):.1f} MB/s" if speed > 0 else ""
+    if total > 0:
+        pct = int(done * 100 / total) if total else 0
+        return (f"Downloading… {mb_done:.1f} / {total / (1024 * 1024):.1f} MB "
+                f"({pct}%){speed_txt}")
+    return f"Downloading… {mb_done:.1f} MB{speed_txt}"
+
+
 class RemoteDeskApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -275,12 +287,28 @@ class RemoteDeskApp:
                             "assets", name)
 
     def _set_window_icon(self):
-        """Window + taskbar icon. Guarded: a missing icon must never break startup."""
+        """Window + taskbar icon: embedded PNG first, then file, then .ico.
+
+        A missing icon must never break startup — but it IS logged so a
+        silent fallback to the default icon is visible in the activity log.
+        """
+        source = "none"
         try:
             from PIL import Image, ImageTk
-            png = self._asset_path("icon.png")
-            if os.path.exists(png):
-                img = Image.open(png)
+            img = None
+            try:
+                import base64
+                from .icon_data import ICON_PNG_B64
+                img = Image.open(io.BytesIO(base64.b64decode(ICON_PNG_B64)))
+                source = "embedded"
+            except Exception:
+                img = None
+            if img is None:
+                png = self._asset_path("icon.png")
+                if os.path.exists(png):
+                    img = Image.open(png)
+                    source = "file"
+            if img is not None:
                 img.thumbnail((64, 64))
                 self._icon_photo = ImageTk.PhotoImage(img)
                 self.root.iconphoto(True, self._icon_photo)
@@ -292,7 +320,9 @@ class RemoteDeskApp:
                     except tk.TclError:
                         pass
         except Exception:
-            pass
+            source = "none"
+        self._log(f"App icon loaded: {source} (if Windows still shows the old icon, "
+                  "uninstall the old version + clear the icon cache — see Troubleshooting).")
 
     # ------------------------------------------------------------- building
     def _build(self):
@@ -492,7 +522,7 @@ class RemoteDeskApp:
                  justify="left").pack(anchor="w", pady=(4, 0))
         self._lbl(frame, "Directory ONLY — it maps your Device ID to your IP. "
                   "Screen, input and passwords NEVER pass through it. "
-                  "Pairing code + host Accept are still required.",
+                  "Host Accept is still required for every assisted session.",
                   muted=True, wrap=600).pack(anchor="w", pady=(4, 0))
         btns = self._role(tk.Frame(frame, bg=t["card"]), "card")
         btns.pack(fill="x", pady=(8, 2))
@@ -524,7 +554,7 @@ class RemoteDeskApp:
         self._btn(btns, "Refresh", self._refresh_internet_info, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Copy connection details", self._copy_connection_details,
                   "ghost").pack(side="left", padx=6)
-        self._lbl(frame, "Give this to the controller: Public IP + Port + Pairing code.",
+        self._lbl(frame, "Give this to the controller: Public IP + Port + your Address.",
                   muted=True, wrap=600).pack(anchor="w", pady=(4, 0))
         self._lbl(frame, "Port-forward guide: router → Port Forwarding → TCP "
                   f"{self.settings.get('port', config.DEFAULT_PORT)} → this PC's LAN IP "
@@ -537,8 +567,8 @@ class RemoteDeskApp:
     def _build_home(self):
         page = self.pages["Home"]
         body = self._scrollable(page)
-        self._lbl(body, "Welcome Back!", bold=True, size=20).pack(anchor="w")
-        self._lbl(body, "Control your devices from anywhere — securely.",
+        self._lbl(body, "Welcome Back!", bold=True, size=22).pack(anchor="w")
+        self._lbl(body, "Ready to connect or host a remote session — securely.",
                   muted=True, size=11).pack(anchor="w", pady=(0, 12))
 
         top = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
@@ -546,7 +576,9 @@ class RemoteDeskApp:
         # --- Your Device ID card ---
         id_card = self._role(tk.Frame(top, bg=self.theme["card"], padx=16, pady=12), "card")
         id_card.pack(side="left", fill="both", expand=True, padx=(0, 6))
-        self._lbl(id_card, "YOUR DEVICE ID", muted=True, bold=True, size=9).pack(anchor="w")
+        self._lbl(id_card, "YOUR ADDRESS", muted=True, bold=True, size=9).pack(anchor="w")
+        self._lbl(id_card, "Yehi address dusre PC pe likhna hai.",
+                  muted=True, size=9).pack(anchor="w")
         id_row = self._role(tk.Frame(id_card, bg=self.theme["card"]), "card")
         id_row.pack(fill="x", pady=(6, 2))
         tk.Label(id_row, text=format_device_id(self.device_id),
@@ -562,6 +594,17 @@ class RemoteDeskApp:
         tk.Label(status_row, textvariable=self.home_status_var,
                  bg=self.theme["card"], fg=self.theme["fg"],
                  font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        # Small info: Device ID is THE address; IPs are just extra info.
+        ip_row = self._role(tk.Frame(id_card, bg=self.theme["card"]), "card")
+        ip_row.pack(fill="x", pady=(4, 0))
+        self._lbl(ip_row, "IP (LAN):", muted=True, size=9).pack(side="left")
+        tk.Label(ip_row, textvariable=self.lan_ip_var,
+                 bg=self.theme["card"], fg=self.theme["muted"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=4)
+        self._lbl(ip_row, "•  Public IP (Internet):", muted=True, size=9).pack(side="left")
+        tk.Label(ip_row, textvariable=self.public_ip_var,
+                 bg=self.theme["card"], fg=self.theme["muted"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=4)
         # --- Host this PC card ---
         host_card = self._role(tk.Frame(top, bg=self.theme["card"], padx=16, pady=12), "card")
         host_card.pack(side="left", fill="both", expand=True, padx=(6, 0))
@@ -569,49 +612,52 @@ class RemoteDeskApp:
         self.host_btn = self._btn(host_card, "▶  Start Hosting — allow connections",
                                   self._toggle_hosting, "primary")
         self.host_btn.pack(anchor="w", pady=(8, 4))
-        self.pairing_var = tk.StringVar(value="Pairing code: — (start hosting to generate)")
-        tk.Label(host_card, textvariable=self.pairing_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 11, "bold"),
-                 wraplength=300, justify="left").pack(anchor="w")
-        self._btn(host_card, "Generate new pairing code", self._new_pairing_code,
-                  "ghost").pack(anchor="w", pady=(6, 2))
-        self._lbl(host_card, "Share this code ONLY with the person you want to let in. "
-                  "It expires in 5 minutes and works once.", muted=True, wrap=320).pack(anchor="w")
-        self._conn_type_radios(host_card)
-        self.home_internet = self._internet_block(host_card)
-        self.home_signaling = self._signaling_block(host_card)
+        self._lbl(host_card, "Hosting ON hone pe dusra PC tumhara Address likh "
+                  "ke connect karega — tumhare paas Accept / Decline ka popup "
+                  "aayega. Koi code nahi chahiye.",
+                  muted=True, wrap=320).pack(anchor="w", pady=(8, 0))
+        # v1.0.5 (AnyDesk-simple): NO connection-type / signaling / UPnP
+        # controls on Home — those live in Settings > Network. Home is
+        # just: YOUR ADDRESS + CONNECT (one address box).
 
-        # --- Connect to remote (v1.0.4: IP and Device ID are SEPARATE fields.
-        # A Device ID alone cannot connect without the signaling server —
-        # the old single "Device ID or IP" box lied about that.) ---
+        # --- Connect to remote: ONE address box (Device ID or IP). ---
         card = self._card(body, "Connect to a remote device")
-        grid = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        grid.pack(fill="x")
-        grid.columnconfigure(1, weight=1)
-        grid.columnconfigure(3, weight=1)
-        self._lbl(grid, "Remote IP address:").grid(row=0, column=0, sticky="w", pady=3)
-        self.home_ip = self._entry(grid, width=22)
-        self.home_ip.grid(row=0, column=1, sticky="ew", padx=(6, 12), pady=3)
-        self._lbl(grid, "Remote Device ID:").grid(row=0, column=2, sticky="w", pady=3)
-        self.home_device_id = self._entry(grid, width=16)
-        self.home_device_id.grid(row=0, column=3, sticky="ew", padx=(6, 0), pady=3)
-        self._lbl(grid, "Pairing code:").grid(row=1, column=0, sticky="w", pady=3)
-        self.home_code = self._entry(grid, width=14, show="•")
-        self.home_code.grid(row=1, column=1, sticky="ew", padx=(6, 12), pady=3)
+        self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
+        self.home_address = self._entry(card, width=40)
+        self.home_address.pack(anchor="w", pady=(2, 2), fill="x")
+        self.home_address.insert(0, "")
+        self.home_address.bind("<Return>", lambda _e: self._connect_from_home())
+        self._lbl(card, "Device ID ya IP address likho — misal 739 738 074 ya 192.168.1.100",
+                  muted=True, size=9).pack(anchor="w")
+        # FINAL v1.0.5 FLOW: Address + Connect. Assisted = host popup +
+        # Accept, ALWAYS. No pairing code anywhere. Unattended (password)
+        # is the only no-Accept path, and only when ticked here.
         self.home_unattended = tk.BooleanVar(value=False)
-        cb = tk.Checkbutton(grid, text="Use unattended", variable=self.home_unattended,
+        self.home_pw_frame = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        self._lbl(self.home_pw_frame, "Unattended password",
+                  bold=True).pack(anchor="w")
+        self.home_pw = self._entry(self.home_pw_frame, width=20, show="•")
+        self.home_pw.pack(anchor="w", pady=(2, 2))
+        cb_un = tk.Checkbutton(card, text="Unattended (password se)",
+                               variable=self.home_unattended, font=("Segoe UI", 10),
+                               command=self._toggle_home_unattended)
+        self._role(cb_un, "check_card")
+        cb_un.pack(anchor="w", pady=(6, 0))
+        self._lbl(card, "Assisted: host ke popup pe Accept zaroori hai. "
+                  "Unattended tick karne pe password se connect hoga, popup nahi aayega.",
+                  muted=True, wrap=640).pack(anchor="w", pady=(4, 0))
+        cb = tk.Checkbutton(card, text="Use unattended", variable=self.home_unattended,
                             font=("Segoe UI", 10))
         self._role(cb, "check_card")
-        cb.grid(row=1, column=2, columnspan=2, sticky="w", pady=3)
-        self._lbl(grid, "IP required. Device ID is reference-only — it connects "
-                  "ONLY via Signaling Server mode (or LAN scan).",
-                  muted=True, wrap=640).grid(row=2, column=0, columnspan=4,
-                                             sticky="w", pady=(2, 0))
+        cb.pack(anchor="w", pady=(2, 0))
         row2 = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
         row2.pack(fill="x", pady=(8, 0))
         self._btn(row2, "Connect", self._connect_from_home, "primary").pack(side="left", padx=(0, 6))
         self._btn(row2, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
         self._btn(row2, "Find on LAN", self._find_on_lan_home, "ghost").pack(side="left", padx=6)
+        self._lbl(card, "1) Dusre PC pe Start Hosting dabao, uska Address lo. "
+                  "2) Yahan Address likh ke Connect dabao — dusre PC pe Accept ka popup aayega.",
+                  muted=True, wrap=640).pack(anchor="w", pady=(6, 0))
         tk.Label(card, textvariable=self.connect_status_var, bg=self.theme["card"],
                  fg=self.theme["muted"], font=("Segoe UI", 10),
                  wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
@@ -667,40 +713,31 @@ class RemoteDeskApp:
             frame = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
             self.rc_tabs[name] = frame
 
-        # --- Quick Connect tab (v1.0.4: split IP + Device ID fields) ---
+        # --- Quick Connect tab (v1.0.5: ONE Remote Address box, AnyDesk-simple) ---
         quick = self.rc_tabs["Quick Connect"]
         card = self._card(quick, "Quick connect")
-        grid = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        grid.pack(fill="x")
-        grid.columnconfigure(1, weight=1)
-        grid.columnconfigure(3, weight=1)
-        self._lbl(grid, "Remote IP address:").grid(row=0, column=0, sticky="w", pady=3)
-        self.connect_host = self._entry(grid, width=22)
-        self.connect_host.grid(row=0, column=1, sticky="ew", padx=(6, 12), pady=3)
-        self._lbl(grid, "Port:").grid(row=0, column=2, sticky="w", pady=3)
-        self.connect_port = self._entry(grid, width=7)
-        self.connect_port.grid(row=0, column=3, sticky="w", padx=(6, 0), pady=3)
+        self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
+        self.connect_host = self._entry(card, width=40)
+        self.connect_host.pack(anchor="w", pady=(2, 2), fill="x")
+        self._lbl(card, "Device ID ya IP address likho — misal 739 738 074 ya 192.168.1.100",
+                  muted=True, size=9).pack(anchor="w")
+        self._lbl(card, "Port:", bold=True).pack(anchor="w", pady=(8, 0))
+        self.connect_port = self._entry(card, width=10)
+        self.connect_port.pack(anchor="w", pady=(2, 2))
         self.connect_port.insert(0, str(self.settings.get("port", config.DEFAULT_PORT)))
-        self._lbl(grid, "Remote Device ID:").grid(row=1, column=0, sticky="w", pady=3)
-        self.connect_device_id = self._entry(grid, width=22)
-        self.connect_device_id.grid(row=1, column=1, sticky="ew", padx=(6, 12), pady=3)
-        self._lbl(grid, "Pairing code:").grid(row=1, column=2, sticky="w", pady=3)
-        self.connect_code = self._entry(grid, width=16, show="•")
-        self.connect_code.grid(row=1, column=3, sticky="ew", padx=(6, 0), pady=3)
-        row2 = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        row2.pack(fill="x", pady=8)
-        self._lbl(row2, "Pairing code (or unattended password):").pack(side="left")
         self.use_unattended = tk.BooleanVar(value=False)
-        cb = tk.Checkbutton(row2, text="Use unattended password",
-                            variable=self.use_unattended, font=("Segoe UI", 10))
+        cb = tk.Checkbutton(card, text="Unattended (password se)",
+                            variable=self.use_unattended, font=("Segoe UI", 10),
+                            command=self._toggle_rc_unattended)
         self._role(cb, "check_card")
-        cb.pack(side="left")
-        self._lbl(row2, "IP required. Device ID connects ONLY via Signaling "
-                  "Server mode (or LAN scan).",
-                  muted=True, wrap=640).pack(side="left", padx=(12, 0))
-        self._conn_type_radios(card)
+        cb.pack(anchor="w", pady=(8, 0))
+        self.rc_pw_frame = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        self._lbl(self.rc_pw_frame, "Unattended password", bold=True).pack(anchor="w")
+        self.connect_code = self._entry(self.rc_pw_frame, width=20, show="•")
+        self.connect_code.pack(anchor="w", pady=(2, 2))
+        # Advanced connection options live in Settings > Network.
         btns = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        btns.pack(fill="x")
+        btns.pack(fill="x", pady=(8, 0))
         self._btn(btns, "Connect", self._connect, "primary").pack(side="left", padx=(0, 6))
         self._btn(btns, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Scan LAN for devices", self._scan_lan, "ghost").pack(side="left", padx=6)
@@ -708,13 +745,11 @@ class RemoteDeskApp:
         tk.Label(card, textvariable=self.connect_status_var, bg=self.theme["card"],
                  fg=self.theme["muted"], font=("Segoe UI", 10),
                  wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
-        self.rc_internet = self._internet_block(quick)
-        self.rc_signaling = self._signaling_block(quick)
 
         # --- Saved Devices tab ---
         saved = self.rc_tabs["Saved Devices"]
         card2 = self._card(saved, "Saved devices (trusted)")
-        self._lbl(card2, "Click a saved device to fill the Device ID entry, "
+        self._lbl(card2, "Click a saved device to fill the Remote Address entry, "
                   "then switch to Quick Connect.", muted=True, wrap=640).pack(anchor="w")
         self.saved_listbox = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10),
                                         height=6)
@@ -753,10 +788,10 @@ class RemoteDeskApp:
         text = self.saved_listbox.get(sel[0])
         m = re.search(r"ID\s+([\d ]+)", text)
         if m:
-            # Saved devices carry an ID, not an IP — fill the Device ID
-            # field (it only connects via Signaling Server / LAN scan).
-            self.connect_device_id.delete(0, "end")
-            self.connect_device_id.insert(0, m.group(1).strip())
+            # Saved devices carry an ID — fill the single Remote Address
+            # box (auto-resolves via LAN scan, then signaling server).
+            self.connect_host.delete(0, "end")
+            self.connect_host.insert(0, m.group(1).strip())
             self._show_rc_tab("Quick Connect")
 
     def _on_discovered_select(self, _event=None):
@@ -769,9 +804,9 @@ class RemoteDeskApp:
         if m_ip:
             self.connect_host.delete(0, "end")
             self.connect_host.insert(0, m_ip.group(1))
-        if m_id:
-            self.connect_device_id.delete(0, "end")
-            self.connect_device_id.insert(0, m_id.group(1).strip())
+        elif m_id:
+            self.connect_host.delete(0, "end")
+            self.connect_host.insert(0, m_id.group(1).strip())
         self._show_rc_tab("Quick Connect")
 
     # ------------------------------------------------------------- Viewer
@@ -969,8 +1004,9 @@ class RemoteDeskApp:
     def _build_trusted(self):
         page = self.pages["Trusted Devices"]
         self._lbl(page, "Trusted Devices", bold=True, size=18).pack(anchor="w")
-        self._lbl(page, "Devices allowed to connect without a new pairing code "
-                  "(unattended access still needs its password).",
+        self._lbl(page, "Address book: click a device to fill the Remote Address "
+                  "field. Every connect STILL needs host Accept — trusted "
+                  "devices do NOT auto-accept.",
                   muted=True, wrap=640).pack(anchor="w", pady=(0, 12))
         self.trusted_list = tk.Listbox(page, relief="flat", font=("Segoe UI", 10), height=8)
         self._role(self.trusted_list, "listbox")
@@ -1171,6 +1207,11 @@ class RemoteDeskApp:
                   "checkbox on incoming requests. Per-session host permission "
                   "is still required when it is enabled.", muted=True,
                   wrap=640).pack(anchor="w", pady=(4, 0))
+        self._lbl(card3, "Assisted sessions ALWAYS need host Accept — there is "
+                  "no auto-accept, not even for trusted devices. The only "
+                  "no-Accept path is Unattended (password, opt-in, on the "
+                  "Trusted Devices page).",
+                  muted=True, wrap=640).pack(anchor="w", pady=(8, 0))
         self._btn(card3, "Save session options", self._save_security_toggles,
                   "primary").pack(anchor="w", pady=(8, 0))
         card4 = self._card(body, "Session safety")
@@ -1317,6 +1358,11 @@ class RemoteDeskApp:
                     self.connect_status_var.set(payload)
                 elif kind == "request":
                     self._show_request_dialog(payload)
+                elif kind == "show_code_prompt":
+                    # Legacy queue kind — no longer used (no code prompt
+                    # in the final v1.0.5 flow). Kept so old threads can't
+                    # crash the pump.
+                    self.connect_status_var.set(payload)
                 elif kind == "update":
                     self._show_update_popup(payload)
                 elif kind == "viewer_status":
@@ -1471,8 +1517,8 @@ class RemoteDeskApp:
     def _copy_connection_details(self):
         public = self.public_ip_var.get()
         port = self.settings.get("port", config.DEFAULT_PORT)
-        code = self._current_pairing_code or "— (generate a pairing code on the host first)"
-        text = f"RemoteDesk — connect with: {public}:{port} + pairing code {code}"
+        text = (f"RemoteDesk — connect with: Address {format_device_id(self.device_id)} "
+                f"ya IP {public}:{port} (host pe Accept ka popup aayega)")
         try:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
@@ -1527,7 +1573,6 @@ class RemoteDeskApp:
                                self.settings, on_request=self._queue_request,
                                on_log=self._log)
         self.host.start()
-        self._new_pairing_code()
         self.host_btn.configure(text="■  Stop Hosting")
         self._refresh_pill()
         # Auto-register on the signaling server if the user enabled it.
@@ -1536,16 +1581,16 @@ class RemoteDeskApp:
             self._signaling_register_now()
 
     def _new_pairing_code(self):
-        if self.host is None:
-            messagebox.showinfo("Pairing code", "Start hosting first.")
-            return
-        code = self.host.pairing.issue()
-        self._current_pairing_code = code
-        self.pairing_var.set(f"Pairing code: {code}  (expires in 5 minutes, single use)")
-        self._log("New pairing code generated (code itself is never logged).")
+        # Kept for compatibility: pairing codes were removed from the
+        # assisted flow in v1.0.5 (host Accept popup decides). No-op.
+        self._log("Pairing codes are not used in the v1.0.5 assisted flow.")
 
     def _queue_request(self, peer: dict):
-        """Called from host thread — hand the decision to the UI thread."""
+        """Called from host thread — hand the decision to the UI thread.
+
+        Returns (accept, control, files). Assisted sessions ALWAYS need
+        this Accept — there is no auto-accept, not even for trusted devices.
+        """
         result: dict = {}
         self.msg_queue.put(("request", (peer, result)))
         while "accept" not in result:
@@ -1654,25 +1699,45 @@ class RemoteDeskApp:
             self._log("Incoming request closed without an answer — treated as rejected.")
 
     # ------------------------------------------------------------- connect
-    # v1.0.4: IP and Device ID are separate inputs. A bare 9-digit ID in
-    # the IP field is BLOCKED (connect_target), never attempted.
+    # v1.0.5 (AnyDesk-simple): Home has ONE Remote Address box. A 9-digit
+    # Device ID is auto-resolved (LAN scan first, then signaling server).
+    def _toggle_home_unattended(self):
+        if self.home_unattended.get():
+            self.home_pw_frame.pack(anchor="w", fill="x", pady=(6, 0))
+        else:
+            self.home_pw_frame.pack_forget()
+
+    def _toggle_rc_unattended(self):
+        if self.use_unattended.get():
+            self.rc_pw_frame.pack(anchor="w", fill="x", pady=(6, 0))
+        else:
+            self.rc_pw_frame.pack_forget()
+
     def _connect_from_home(self):
-        ip_text = self.home_ip.get().strip()
-        did_text = self.home_device_id.get().strip()
-        code = self.home_code.get().strip()
-        self._start_connect(ip_text, did_text,
+        address = self.home_address.get().strip()
+        # Unattended ticked -> password; otherwise assisted (host popup).
+        code = self.home_pw.get().strip() if self.home_unattended.get() else ""
+        if self.home_unattended.get() and not code:
+            self.connect_status_var.set("Unattended password likho (host pe Settings me set hota hai).")
+            return
+        self._start_connect(address, "",
                             int(self.settings.get("port", config.DEFAULT_PORT)),
                             code, self.home_unattended.get())
 
     def _connect(self):
         ip_text = self.connect_host.get().strip()
-        did_text = self.connect_device_id.get().strip()
+        did_text = ""
         try:
             port = int(self.connect_port.get().strip())
         except ValueError:
             messagebox.showerror("Connect", "Port must be a number.")
             return
-        code = self.connect_code.get().strip()
+        # Assisted (default): no code — host popup decides. Unattended
+        # ticked: password is the only credential.
+        code = self.connect_code.get().strip() if self.use_unattended.get() else ""
+        if self.use_unattended.get() and not code:
+            messagebox.showerror("Unattended", "Unattended password likho.")
+            return
         self._start_connect(ip_text, did_text, port, code, self.use_unattended.get())
 
     def _start_connect(self, ip_text: str, device_id_text: str, port: int,
@@ -1703,6 +1768,17 @@ class RemoteDeskApp:
         action = decision["action"]
         if action == "direct":
             return decision["host"], decision["port"] or default_port, None
+        if action == "auto_resolve":
+            did = decision["device_id"]
+            self.msg_queue.put(("connect_status",
+                                f"Resolving {format_device_id(did)} …"))
+            host, port, error = connect_target.resolve_device_id(
+                did, self.settings.get("signaling_url", ""),
+                scan_fn=lambda: DiscoveryListener(duration_s=5.0).scan(),
+                lookup_fn=lambda url, d: signaling.lookup_device(url, d))
+            if error is not None:
+                return "", default_port, error
+            return host, port or default_port, None
         if action == "lan_scan":
             did = decision["device_id"]
             self.msg_queue.put(("connect_status", f"Resolving {format_device_id(did)} on LAN …"))
@@ -1739,7 +1815,8 @@ class RemoteDeskApp:
         if unattended:
             ok, msg = self.client.connect(host, resolved_port, unattended_password=code)
         else:
-            ok, msg = self.client.connect(host, resolved_port, pairing_code=code)
+            # Assisted: request only — host popup + Accept decides.
+            ok, msg = self.client.connect(host, resolved_port)
         if ok:
             self.msg_queue.put(("connect_status", "Waiting for host…"))
             self._session_start = time.time()
@@ -1751,6 +1828,12 @@ class RemoteDeskApp:
             self.msg_queue.put(("file_status", "Session active."))
             self.msg_queue.put(("show_page", "Viewer"))
         else:
+            if "rejected" in msg.lower():
+                detail = "Host ne request decline kar di / jawab nahi diya."
+                self.msg_queue.put(("viewer_status", f"Connection failed: {detail}"))
+                self.msg_queue.put(("connect_status", f"Connection failed: {detail}"))
+                self._log(f"Connection failed: {detail}")
+                return
             if "Could not connect" in msg:
                 detail = (f"Host not reachable at {host}:{resolved_port} — check hosting ON, "
                           "same Wi-Fi for LAN, Public IP + port mapping for Internet, "
@@ -1763,10 +1846,11 @@ class RemoteDeskApp:
 
     # ------------------------------------------------------------- Find on LAN
     def _find_on_lan_home(self):
-        self._find_on_lan_fill(self.home_ip, self.home_device_id)
+        # Home has ONE address box: fill it with the found device's IP.
+        self._find_on_lan_fill(self.home_address, None)
 
     def _find_on_lan_rc(self):
-        self._find_on_lan_fill(self.connect_host, self.connect_device_id)
+        self._find_on_lan_fill(self.connect_host, None)
 
     def _find_on_lan_fill(self, ip_entry, id_entry):
         """Scan the LAN, then fill the IP field (chooser if several found)."""
@@ -1820,8 +1904,9 @@ class RemoteDeskApp:
         try:
             ip_entry.delete(0, "end")
             ip_entry.insert(0, ip)
-            id_entry.delete(0, "end")
-            id_entry.insert(0, format_device_id(did))
+            if id_entry is not None:
+                id_entry.delete(0, "end")
+                id_entry.insert(0, format_device_id(did))
         except tk.TclError:
             pass
         self.connect_status_var.set(f"Found device {format_device_id(did)} at {ip} — IP filled in.")
@@ -1947,7 +2032,13 @@ class RemoteDeskApp:
                 continue
             lst.delete(0, "end")
             for d in storage.load_trusted():
-                lst.insert("end", f"● {d.get('device_name')} — ID {format_device_id(d.get('device_id', ''))}")
+                perms = []
+                if d.get("control_allowed"):
+                    perms.append("control")
+                if d.get("files_allowed"):
+                    perms.append("files")
+                perm_txt = f" ({', '.join(perms)})" if perms else " (view only)"
+                lst.insert("end", f"● {d.get('device_name')} — ID {format_device_id(d.get('device_id', ''))}{perm_txt}")
 
     def _remove_trusted(self):
         sel = self.trusted_list.curselection()
@@ -2070,6 +2161,8 @@ class RemoteDeskApp:
     def _save_security_toggles(self):
         self.settings["clipboard_sync"] = self.clipboard_var.get()
         self.settings["file_transfer_enabled"] = self.ft_enabled_var.get()
+        # auto_accept_trusted was removed in v1.0.5 (no auto-accept).
+        self.settings.pop("auto_accept_trusted", None)
         storage.save_settings(self.settings)
         messagebox.showinfo("Settings", "Session options saved.")
         self._log("Session options saved.")
@@ -2177,35 +2270,60 @@ class RemoteDeskApp:
                                 "are not configured yet — see docs/SETUP_UPDATE.md).")
 
     def _show_update_popup(self, release: dict):
+        """Centered in-app update popup with a FIXED footer.
+
+        The dialog opens centered on the main window (never in a browser),
+        and the footer — version row, download status + progress bar,
+        buttons — stays visible below the changelog, never scrolled away.
+        """
         t = self.theme
         self._download_cancel = threading.Event()
         self._downloaded_path = None
+        self._upd_started_at = None
         dlg = tk.Toplevel(self.root)
         dlg.title("Update available")
-        dlg.geometry("560x430")
         dlg.configure(bg=t["card"])
         dlg.transient(self.root)
         dlg.grab_set()
-        tk.Label(dlg, text=f"✦  New update available: {release['tag']}",
+        dlg.resizable(False, False)
+        w, h = 560, 500
+        dlg.geometry(f"{w}x{h}")
+        dlg.update_idletasks()
+        try:
+            px, py = self.root.winfo_rootx(), self.root.winfo_rooty()
+            pw, ph = self.root.winfo_width(), self.root.winfo_height()
+            x = px + max((pw - w) // 2, 0)
+            y = py + max((ph - h) // 2, 0)
+            dlg.geometry(f"+{x}+{y}")
+        except tk.TclError:
+            pass
+        tk.Label(dlg, text=f"✦  Update available — {release['tag']}",
                  font=("Segoe UI", 14, "bold"), bg=t["card"], fg=t["fg"]).pack(
-                     padx=18, pady=(14, 4), anchor="w")
+                     padx=18, pady=(14, 2), anchor="w")
         tk.Label(dlg, text=f"You are on v{VERSION}. The installer downloads inside this app — no browser redirect.",
                  bg=t["card"], fg=t["muted"], font=("Segoe UI", 10),
                  wraplength=510, justify="left").pack(padx=18, anchor="w")
-        notes = tk.Text(dlg, height=7, relief="flat", font=("Segoe UI", 10),
+        tk.Label(dlg, text="What's new:", bg=t["card"], fg=t["fg"],
+                 font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(8, 2), anchor="w")
+        notes = tk.Text(dlg, height=8, relief="flat", font=("Segoe UI", 10),
                         bg=t["entry"], fg=t["fg"])
-        notes.pack(padx=18, pady=10, fill="both", expand=True)
+        notes.pack(padx=18, fill="x")
         notes.insert("1.0", release.get("notes", "(No changelog provided.)"))
         notes.configure(state="disabled")
-
-        self._upd_progress = ttk.Progressbar(dlg, mode="determinate",
+        # ---- FIXED footer (always visible below the changelog) ----
+        footer = tk.Frame(dlg, bg=t["card"])
+        footer.pack(fill="x", side="bottom", padx=18, pady=(8, 14))
+        tk.Frame(footer, bg=t["border"], height=1).pack(fill="x", pady=(0, 8))
+        tk.Label(footer, text=f"New version: {release['tag']}   •   Current: v{VERSION}",
+                 bg=t["card"], fg=t["fg"], font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        self._upd_progress = ttk.Progressbar(footer, mode="determinate",
                                              style="Blue.Horizontal.TProgressbar")
-        self._upd_progress.pack(padx=18, fill="x", pady=(0, 4))
-        self._upd_status = tk.StringVar(value="Ready to download.")
-        tk.Label(dlg, textvariable=self._upd_status, bg=t["card"], fg=t["muted"],
-                 font=("Segoe UI", 10)).pack(padx=18, anchor="w")
-        btns = tk.Frame(dlg, bg=t["card"])
-        btns.pack(pady=12)
+        self._upd_progress.pack(fill="x", pady=(6, 4))
+        self._upd_status = tk.StringVar(value="Not downloaded yet.")
+        tk.Label(footer, textvariable=self._upd_status, bg=t["card"], fg=t["muted"],
+                 font=("Segoe UI", 10), wraplength=510, justify="left").pack(anchor="w")
+        btns = tk.Frame(footer, bg=t["card"])
+        btns.pack(pady=(10, 0))
         self._upd_download_btn = tk.Button(
             btns, text="⬇  Download Update", bg=t["accent"], fg=t["accent_fg"],
             relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=6,
@@ -2244,6 +2362,7 @@ class RemoteDeskApp:
             self._upd_status.set("No installer file in this release — use the release page instead.")
             return
         self._download_cancel = threading.Event()
+        self._upd_started_at = time.time()
         self._upd_download_btn.configure(state="disabled", text="Downloading…")
         self._upd_status.set(f"Downloading {asset['name']} …")
         self._upd_progress.configure(value=0)
@@ -2263,19 +2382,18 @@ class RemoteDeskApp:
         if not hasattr(self, "_upd_progress"):
             return
         try:
+            elapsed = 0.0
+            if getattr(self, "_upd_started_at", None):
+                elapsed = max(time.time() - self._upd_started_at, 0.0)
             if total > 0:
                 self._upd_progress.configure(maximum=total, value=done)
-                pct = int(done * 100 / total)
-                mb_done = done / (1024 * 1024)
-                mb_total = total / (1024 * 1024)
-                self._upd_status.set(f"Downloading… {pct}% ({mb_done:.1f} / {mb_total:.1f} MB)")
             else:
                 self._upd_progress.configure(mode="indeterminate")
                 try:
                     self._upd_progress.start(10)
                 except tk.TclError:
                     pass
-                self._upd_status.set(f"Downloading… {done / (1024 * 1024):.1f} MB")
+            self._upd_status.set(format_update_status(done, total, elapsed))
         except tk.TclError:
             pass
 

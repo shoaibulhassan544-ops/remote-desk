@@ -77,12 +77,30 @@ def load_trusted(data_dir: str | None = None) -> list[dict]:
 
 
 def add_trusted(device_id: str, device_name: str, note: str = "",
-                data_dir: str | None = None) -> list[dict]:
+                data_dir: str | None = None, control_allowed: bool = False,
+                files_allowed: bool = False) -> list[dict]:
+    """Add/replace a trusted device.
+
+    Trust is per-device and revocable (see remove_trusted). Records carry
+    the permissions the host granted at trust time, so a later
+    one-click trusted connect reuses exactly those permissions.
+    """
     devices = [d for d in load_trusted(data_dir) if d.get("device_id") != device_id]
     devices.append({"device_id": device_id, "device_name": device_name,
-                    "note": note, "added_at": time.time()})
+                    "note": note, "added_at": time.time(),
+                    "trusted_at": time.time(),
+                    "control_allowed": bool(control_allowed),
+                    "files_allowed": bool(files_allowed)})
     _save("trusted", devices, data_dir)
     return devices
+
+
+def find_trusted(device_id: str, data_dir: str | None = None) -> dict | None:
+    """Return the trusted record for a device ID, or None."""
+    for d in load_trusted(data_dir):
+        if d.get("device_id") == str(device_id):
+            return d
+    return None
 
 
 def remove_trusted(device_id: str, data_dir: str | None = None) -> list[dict]:
