@@ -55,8 +55,10 @@ DEFAULT_SETTINGS = {
     "unattended_password_hash": "",
     "unattended_allow_control": False,
     "hosting_enabled": False,
-    "connection_type": "lan",  # "lan" | "internet" — UI default, saved
+    "connection_type": "lan",  # "lan" | "internet" | "signaling" — UI default, saved
     "file_transfer_enabled": True,  # global gate; per-session host Accept still required
+    "signaling_url": "",  # empty = signaling OFF; both PCs must use the same URL
+    "signaling_auto_register": False,  # register this PC when hosting starts
 }
 
 # ------------------------------------------------------------------ settings

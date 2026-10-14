@@ -16,7 +16,12 @@ Honesty rules (unchanged, enforced):
   download folder. No drag-and-drop claim unless tkinterdnd2 imports.
 - Two-factor auth: DISABLED toggle with "not implemented in this build".
 - Internet mode is direct TCP to a public IP (UPnP / manual port
-  forwarding). No signaling server, no relay — the UI never shows one.
+  forwarding), OR via an optional signaling server (Settings) that
+  maps a Device ID to an IP. The signaling server is a directory
+  ONLY — no relay, no screen/password ever passes through it.
+- A bare 9-digit Device ID in the IP field is BLOCKED, never
+  attempted: an ID alone cannot resolve without the signaling
+  server (v1.0.4 fix for the "not found on this LAN" bug).
 - Incoming requests pop a modal dialog: Accept/Reject + permission
   checkboxes, auto-reject after 60 s of no answer.
 - Update popup: in-app download with progress (v1.0.2); browser fallback
@@ -37,7 +42,7 @@ import webbrowser
 from collections import deque
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from . import config, internet, storage, update_checker
+from . import config, connect_target, internet, signaling, storage, update_checker
 from .client import RemoteClient
 from .device_id import format_device_id, get_device_name, load_or_create_device_id
 from .discovery import DiscoveryListener
@@ -103,6 +108,12 @@ class RemoteDeskApp:
         # Shared state vars (one var, labels on several pages).
         self.conn_type_var = tk.StringVar(
             value=self.settings.get("connection_type", "lan"))
+        # Signaling server (AnyDesk-style ID lookup). Empty = OFF.
+        self.signaling_url_var = tk.StringVar(
+            value=self.settings.get("signaling_url", ""))
+        self.signaling_auto_var = tk.BooleanVar(
+            value=bool(self.settings.get("signaling_auto_register", False)))
+        self.signaling_status_var = tk.StringVar(value="Signaling server: OFF (no URL set).")
         self.public_ip_var = tk.StringVar(value="—")
         self.lan_ip_var = tk.StringVar(value="—")
         self.upnp_var = tk.StringVar(value="—")
@@ -113,6 +124,7 @@ class RemoteDeskApp:
             value="Not connected — connect from Remote Control.")
         self.viewer_quality_var = tk.StringVar(value="Quality: —")
         self._internet_last_fetch = 0.0
+        self._set_window_icon()
         self._build()
         self._apply_theme()
         self._show_page("Home")
@@ -254,6 +266,34 @@ class RemoteDeskApp:
             self.status_pill.configure(text="○  Idle", bg=t["border"], fg=t["fg"])
             self.home_status_var.set("Idle")
 
+    def _asset_path(self, name: str) -> str:
+        """Path to a bundled asset (works from source and from a frozen EXE)."""
+        if getattr(sys, "frozen", False):
+            base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+            return os.path.join(base, "assets", name)
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "assets", name)
+
+    def _set_window_icon(self):
+        """Window + taskbar icon. Guarded: a missing icon must never break startup."""
+        try:
+            from PIL import Image, ImageTk
+            png = self._asset_path("icon.png")
+            if os.path.exists(png):
+                img = Image.open(png)
+                img.thumbnail((64, 64))
+                self._icon_photo = ImageTk.PhotoImage(img)
+                self.root.iconphoto(True, self._icon_photo)
+            if sys.platform.startswith("win"):
+                ico = self._asset_path("icon.ico")
+                if os.path.exists(ico):
+                    try:
+                        self.root.iconbitmap(ico)
+                    except tk.TclError:
+                        pass
+        except Exception:
+            pass
+
     # ------------------------------------------------------------- building
     def _build(self):
         t = self.theme
@@ -343,6 +383,9 @@ class RemoteDeskApp:
             self._refresh_home_history()
         if name in ("Home", "Remote Control") and self.conn_type_var.get() == "internet":
             self._refresh_internet_info()
+        if name in ("Home", "Remote Control") and self.conn_type_var.get() == "signaling":
+            self._update_signaling_status()
+        self._refresh_signaling_blocks()
         self._refresh_nav()
 
     # ---- widget helpers ----
@@ -404,17 +447,60 @@ class RemoteDeskApp:
         scrollbar.pack(side="right", fill="y")
         return inner
 
-    def _conn_type_radios(self, parent):
+    # Connection-type options (dropdown — never clipped, wraps at any width).
+    CONN_TYPE_LABELS = {
+        "lan": "Direct (LAN / Same Network)",
+        "internet": "Internet (Direct via Public IP + UPnP)",
+        "signaling": "Internet (via Signaling Server — needs server URL)",
+    }
+    CONN_TYPE_VALUES = ["lan", "internet", "signaling"]
+
+    def _conn_type_combo(self, parent):
+        """Full-width dropdown. v1.0.4: radios clipped the 3rd option off-screen."""
         row = self._role(tk.Frame(parent, bg=self.theme["card"]), "card")
         row.pack(fill="x", pady=(0, 6))
         self._lbl(row, "Connection type:").pack(side="left")
-        for label, value in (("Direct (LAN / Same Network)", "lan"),
-                             ("Internet (Direct via Public IP + UPnP)", "internet")):
-            rb = tk.Radiobutton(row, text=label, variable=self.conn_type_var,
-                                value=value, font=("Segoe UI", 10))
-            self._role(rb, "check_card")
-            rb.pack(side="left", padx=8)
+        self.conn_type_label_var = tk.StringVar(
+            value=self.CONN_TYPE_LABELS.get(self.conn_type_var.get(), "Direct (LAN / Same Network)"))
+        combo = ttk.Combobox(row, textvariable=self.conn_type_label_var,
+                             state="readonly", width=42,
+                             values=[self.CONN_TYPE_LABELS[v] for v in self.CONN_TYPE_VALUES])
+        combo.pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        def _on_select(_event=None):
+            label = self.conn_type_label_var.get()
+            for value, lbl in self.CONN_TYPE_LABELS.items():
+                if lbl == label:
+                    self.conn_type_var.set(value)
+                    break
+
+        combo.bind("<<ComboboxSelected>>", _on_select)
         return row
+
+    def _conn_type_radios(self, parent):
+        # Back-compat alias: old call sites now get the dropdown.
+        return self._conn_type_combo(parent)
+
+    def _signaling_block(self, parent):
+        """Signaling-server info block; visible only in Signaling mode."""
+        t = self.theme
+        frame = self._role(tk.Frame(parent, bg=t["card"]), "card")
+        self._lbl(frame, "Signaling server — Device ID lookup (AnyDesk-style)",
+                  bold=True, size=11).pack(anchor="w")
+        tk.Label(frame, textvariable=self.signaling_status_var, bg=t["card"],
+                 fg=t["fg"], font=("Segoe UI", 10), wraplength=560,
+                 justify="left").pack(anchor="w", pady=(4, 0))
+        self._lbl(frame, "Directory ONLY — it maps your Device ID to your IP. "
+                  "Screen, input and passwords NEVER pass through it. "
+                  "Pairing code + host Accept are still required.",
+                  muted=True, wrap=600).pack(anchor="w", pady=(4, 0))
+        btns = self._role(tk.Frame(frame, bg=t["card"]), "card")
+        btns.pack(fill="x", pady=(8, 2))
+        self._btn(btns, "Register this device", self._signaling_register_now,
+                  "primary").pack(side="left", padx=(0, 6))
+        self._btn(btns, "Settings", lambda: self._show_page("Settings"),
+                  "ghost").pack(side="left", padx=6)
+        return frame
 
     def _internet_block(self, parent):
         """Internet-mode info block; visible only when Internet is selected."""
@@ -493,26 +579,39 @@ class RemoteDeskApp:
                   "It expires in 5 minutes and works once.", muted=True, wrap=320).pack(anchor="w")
         self._conn_type_radios(host_card)
         self.home_internet = self._internet_block(host_card)
+        self.home_signaling = self._signaling_block(host_card)
 
-        # --- Connect to remote ---
+        # --- Connect to remote (v1.0.4: IP and Device ID are SEPARATE fields.
+        # A Device ID alone cannot connect without the signaling server —
+        # the old single "Device ID or IP" box lied about that.) ---
         card = self._card(body, "Connect to a remote device")
-        row = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        row.pack(fill="x")
-        self._lbl(row, "Device ID or IP:").pack(side="left")
-        self.home_target = self._entry(row, width=26)
-        self.home_target.pack(side="left", padx=6)
-        self._lbl(row, "Pairing code:").pack(side="left")
-        self.home_code = self._entry(row, width=14, show="•")
-        self.home_code.pack(side="left", padx=6)
+        grid = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        grid.columnconfigure(3, weight=1)
+        self._lbl(grid, "Remote IP address:").grid(row=0, column=0, sticky="w", pady=3)
+        self.home_ip = self._entry(grid, width=22)
+        self.home_ip.grid(row=0, column=1, sticky="ew", padx=(6, 12), pady=3)
+        self._lbl(grid, "Remote Device ID:").grid(row=0, column=2, sticky="w", pady=3)
+        self.home_device_id = self._entry(grid, width=16)
+        self.home_device_id.grid(row=0, column=3, sticky="ew", padx=(6, 0), pady=3)
+        self._lbl(grid, "Pairing code:").grid(row=1, column=0, sticky="w", pady=3)
+        self.home_code = self._entry(grid, width=14, show="•")
+        self.home_code.grid(row=1, column=1, sticky="ew", padx=(6, 12), pady=3)
         self.home_unattended = tk.BooleanVar(value=False)
-        cb = tk.Checkbutton(row, text="Use unattended", variable=self.home_unattended,
+        cb = tk.Checkbutton(grid, text="Use unattended", variable=self.home_unattended,
                             font=("Segoe UI", 10))
         self._role(cb, "check_card")
-        cb.pack(side="left")
+        cb.grid(row=1, column=2, columnspan=2, sticky="w", pady=3)
+        self._lbl(grid, "IP required. Device ID is reference-only — it connects "
+                  "ONLY via Signaling Server mode (or LAN scan).",
+                  muted=True, wrap=640).grid(row=2, column=0, columnspan=4,
+                                             sticky="w", pady=(2, 0))
         row2 = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
         row2.pack(fill="x", pady=(8, 0))
         self._btn(row2, "Connect", self._connect_from_home, "primary").pack(side="left", padx=(0, 6))
         self._btn(row2, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
+        self._btn(row2, "Find on LAN", self._find_on_lan_home, "ghost").pack(side="left", padx=6)
         tk.Label(card, textvariable=self.connect_status_var, bg=self.theme["card"],
                  fg=self.theme["muted"], font=("Segoe UI", 10),
                  wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
@@ -568,38 +667,49 @@ class RemoteDeskApp:
             frame = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
             self.rc_tabs[name] = frame
 
-        # --- Quick Connect tab ---
+        # --- Quick Connect tab (v1.0.4: split IP + Device ID fields) ---
         quick = self.rc_tabs["Quick Connect"]
         card = self._card(quick, "Quick connect")
-        row = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        row.pack(fill="x")
-        self._lbl(row, "Device ID or Name:").pack(side="left")
-        self.connect_host = self._entry(row, width=26)
-        self.connect_host.pack(side="left", padx=6)
-        self._lbl(row, "Port:").pack(side="left")
-        self.connect_port = self._entry(row, width=7)
-        self.connect_port.pack(side="left", padx=6)
+        grid = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        grid.columnconfigure(3, weight=1)
+        self._lbl(grid, "Remote IP address:").grid(row=0, column=0, sticky="w", pady=3)
+        self.connect_host = self._entry(grid, width=22)
+        self.connect_host.grid(row=0, column=1, sticky="ew", padx=(6, 12), pady=3)
+        self._lbl(grid, "Port:").grid(row=0, column=2, sticky="w", pady=3)
+        self.connect_port = self._entry(grid, width=7)
+        self.connect_port.grid(row=0, column=3, sticky="w", padx=(6, 0), pady=3)
         self.connect_port.insert(0, str(self.settings.get("port", config.DEFAULT_PORT)))
+        self._lbl(grid, "Remote Device ID:").grid(row=1, column=0, sticky="w", pady=3)
+        self.connect_device_id = self._entry(grid, width=22)
+        self.connect_device_id.grid(row=1, column=1, sticky="ew", padx=(6, 12), pady=3)
+        self._lbl(grid, "Pairing code:").grid(row=1, column=2, sticky="w", pady=3)
+        self.connect_code = self._entry(grid, width=16, show="•")
+        self.connect_code.grid(row=1, column=3, sticky="ew", padx=(6, 0), pady=3)
         row2 = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
         row2.pack(fill="x", pady=8)
         self._lbl(row2, "Pairing code (or unattended password):").pack(side="left")
-        self.connect_code = self._entry(row2, width=24, show="•")
-        self.connect_code.pack(side="left", padx=6)
         self.use_unattended = tk.BooleanVar(value=False)
         cb = tk.Checkbutton(row2, text="Use unattended password",
                             variable=self.use_unattended, font=("Segoe UI", 10))
         self._role(cb, "check_card")
         cb.pack(side="left")
+        self._lbl(row2, "IP required. Device ID connects ONLY via Signaling "
+                  "Server mode (or LAN scan).",
+                  muted=True, wrap=640).pack(side="left", padx=(12, 0))
         self._conn_type_radios(card)
         btns = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
         btns.pack(fill="x")
         self._btn(btns, "Connect", self._connect, "primary").pack(side="left", padx=(0, 6))
         self._btn(btns, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Scan LAN for devices", self._scan_lan, "ghost").pack(side="left", padx=6)
+        self._btn(btns, "Find on LAN", self._find_on_lan_rc, "ghost").pack(side="left", padx=6)
         tk.Label(card, textvariable=self.connect_status_var, bg=self.theme["card"],
                  fg=self.theme["muted"], font=("Segoe UI", 10),
                  wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
         self.rc_internet = self._internet_block(quick)
+        self.rc_signaling = self._signaling_block(quick)
 
         # --- Saved Devices tab ---
         saved = self.rc_tabs["Saved Devices"]
@@ -620,6 +730,8 @@ class RemoteDeskApp:
         self._btn(card2, "Scan LAN for devices", self._scan_lan, "ghost").pack(anchor="w", pady=(4, 0))
         self._show_rc_tab("Quick Connect")
         self._refresh_internet_blocks()
+        self._refresh_signaling_blocks()
+        self._update_signaling_status()
 
     def _show_rc_tab(self, name: str):
         t = self.theme
@@ -641,8 +753,10 @@ class RemoteDeskApp:
         text = self.saved_listbox.get(sel[0])
         m = re.search(r"ID\s+([\d ]+)", text)
         if m:
-            self.connect_host.delete(0, "end")
-            self.connect_host.insert(0, m.group(1).strip())
+            # Saved devices carry an ID, not an IP — fill the Device ID
+            # field (it only connects via Signaling Server / LAN scan).
+            self.connect_device_id.delete(0, "end")
+            self.connect_device_id.insert(0, m.group(1).strip())
             self._show_rc_tab("Quick Connect")
 
     def _on_discovered_select(self, _event=None):
@@ -650,11 +764,15 @@ class RemoteDeskApp:
         if not sel:
             return
         text = self.discovered_listbox.get(sel[0])
-        m = re.search(r"(\d+\.\d+\.\d+\.\d+)\s*$", text)
-        if m:
+        m_ip = re.search(r"(\d+\.\d+\.\d+\.\d+)\s*$", text)
+        m_id = re.search(r"ID\s+([\d ]+)", text)
+        if m_ip:
             self.connect_host.delete(0, "end")
-            self.connect_host.insert(0, m.group(1))
-            self._show_rc_tab("Quick Connect")
+            self.connect_host.insert(0, m_ip.group(1))
+        if m_id:
+            self.connect_device_id.delete(0, "end")
+            self.connect_device_id.insert(0, m_id.group(1).strip())
+        self._show_rc_tab("Quick Connect")
 
     # ------------------------------------------------------------- Viewer
     def _build_viewer(self):
@@ -1092,11 +1210,38 @@ class RemoteDeskApp:
         tk.Label(card2, textvariable=self.port_reachable_var, bg=self.theme["card"],
                  fg=self.theme["muted"], font=("Segoe UI", 10), wraplength=600,
                  justify="left").pack(anchor="w", pady=(6, 0))
-        self._lbl(card2, "No signaling server, no relay in this build. Internet "
-                  "mode is a direct TCP connection to the host's public IP. "
-                  "It works when UPnP succeeds or port forwarding is set; "
+        self._lbl(card2, "Internet mode is a direct TCP connection to the host's "
+                  "public IP. It works when UPnP succeeds or port forwarding is set; "
                   "strict / CGNAT routers need a relay server (not included).",
                   muted=True, wrap=640).pack(anchor="w", pady=(6, 0))
+        card_sig = self._card(body, "Signaling server (Device ID lookup)")
+        self._lbl(card_sig, "AnyDesk-style: with a signaling server, controllers "
+                  "connect with your Device ID instead of your IP. The server is "
+                  "a directory ONLY — screen and passwords never pass through it. "
+                  "Without a server, Device IDs cannot resolve; use Direct IP. "
+                  "See docs/SIGNALING_DEPLOY.md for free hosting.",
+                  muted=True, wrap=640).pack(anchor="w")
+        row_sig = self._role(tk.Frame(card_sig, bg=self.theme["card"]), "card")
+        row_sig.pack(fill="x", pady=(8, 0))
+        self._lbl(row_sig, "Server URL:").pack(side="left")
+        self.sig_url_entry = self._entry(row_sig, width=38,
+                                         textvariable=self.signaling_url_var)
+        self.sig_url_entry.pack(side="left", padx=6)
+        cb_sig = tk.Checkbutton(card_sig, text="Register this device when hosting starts",
+                                variable=self.signaling_auto_var,
+                                font=("Segoe UI", 10))
+        self._role(cb_sig, "check_card")
+        cb_sig.pack(anchor="w", pady=(8, 0))
+        btns_sig = self._role(tk.Frame(card_sig, bg=self.theme["card"]), "card")
+        btns_sig.pack(fill="x", pady=(8, 0))
+        self._btn(btns_sig, "Save signaling settings", self._save_signaling,
+                  "primary").pack(side="left", padx=(0, 6))
+        self._btn(btns_sig, "Register now", self._signaling_register_now,
+                  "ghost").pack(side="left", padx=6)
+        tk.Label(card_sig, textvariable=self.signaling_status_var,
+                 bg=self.theme["card"], fg=self.theme["muted"],
+                 font=("Segoe UI", 10), wraplength=600,
+                 justify="left").pack(anchor="w", pady=(6, 0))
         card3 = self._card(body, "Network diagnostics")
         self.diag_box = tk.Text(card3, height=10, relief="flat", font=("Consolas", 9))
         self._role(self.diag_box, "text")
@@ -1202,13 +1347,16 @@ class RemoteDeskApp:
 
     def _on_conn_type_change(self, *_args):
         value = self.conn_type_var.get()
-        if value not in ("lan", "internet"):
+        if value not in ("lan", "internet", "signaling"):
             return
         self.settings["connection_type"] = value
         storage.save_settings(self.settings)
         self._refresh_internet_blocks()
+        self._refresh_signaling_blocks()
         if value == "internet":
             self._refresh_internet_info()
+        if value == "signaling":
+            self._update_signaling_status()
 
     def _refresh_internet_blocks(self):
         show = self.conn_type_var.get() == "internet"
@@ -1220,6 +1368,56 @@ class RemoteDeskApp:
                 frame.pack(fill="x", pady=(8, 0))
             else:
                 frame.pack_forget()
+
+    def _refresh_signaling_blocks(self):
+        show = self.conn_type_var.get() == "signaling"
+        for frame in (getattr(self, "home_signaling", None),
+                      getattr(self, "rc_signaling", None)):
+            if frame is None:
+                continue
+            if show:
+                frame.pack(fill="x", pady=(8, 0))
+            else:
+                frame.pack_forget()
+
+    def _update_signaling_status(self):
+        url = (self.settings.get("signaling_url", "") or "").strip()
+        if not url:
+            self.signaling_status_var.set(
+                "Signaling server: OFF (no URL set). Set it in Settings → Network, "
+                "or use Direct IP.")
+        else:
+            self.signaling_status_var.set(
+                f"Signaling server: {signaling.normalize_server_url(url)}")
+
+    def _signaling_register_now(self):
+        url = (self.settings.get("signaling_url", "") or "").strip()
+        if not url:
+            messagebox.showinfo(
+                "Signaling server",
+                "Signaling server URL set nahi hai — Settings → Network me daalo "
+                "ya Direct IP use karo.")
+            return
+        self.signaling_status_var.set("Registering…")
+
+        def _thread():
+            ok, msg = signaling.register_device(
+                url, self.device_id, self.device_name,
+                int(self.settings.get("port", config.DEFAULT_PORT)))
+            self.root.after(0, lambda: self._after_signaling_register(ok, msg))
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def _after_signaling_register(self, ok, msg):
+        try:
+            self.signaling_status_var.set(f"Signaling: {msg}")
+        except tk.TclError:
+            pass
+        self._log(f"Signaling register: {msg}")
+        if ok:
+            messagebox.showinfo("Signaling server", msg)
+        else:
+            messagebox.showwarning("Signaling server", msg)
 
     def _refresh_internet_info(self):
         now = time.time()
@@ -1318,6 +1516,11 @@ class RemoteDeskApp:
             self.msg_queue.put(("banner", False))
             self._log("Hosting stopped.")
             self._refresh_pill()
+            # Best-effort unregister from the signaling directory.
+            url = (self.settings.get("signaling_url", "") or "").strip()
+            if url:
+                threading.Thread(target=signaling.unregister_device,
+                                 args=(url, self.device_id), daemon=True).start()
             return
         self.host = HostServer(self.device_id, self.device_name,
                                int(self.settings.get("port", config.DEFAULT_PORT)),
@@ -1327,6 +1530,10 @@ class RemoteDeskApp:
         self._new_pairing_code()
         self.host_btn.configure(text="■  Stop Hosting")
         self._refresh_pill()
+        # Auto-register on the signaling server if the user enabled it.
+        if self.settings.get("signaling_auto_register") and \
+                (self.settings.get("signaling_url", "") or "").strip():
+            self._signaling_register_now()
 
     def _new_pairing_code(self):
         if self.host is None:
@@ -1447,93 +1654,178 @@ class RemoteDeskApp:
             self._log("Incoming request closed without an answer — treated as rejected.")
 
     # ------------------------------------------------------------- connect
+    # v1.0.4: IP and Device ID are separate inputs. A bare 9-digit ID in
+    # the IP field is BLOCKED (connect_target), never attempted.
     def _connect_from_home(self):
-        target = self.home_target.get().strip()
+        ip_text = self.home_ip.get().strip()
+        did_text = self.home_device_id.get().strip()
         code = self.home_code.get().strip()
-        self._start_connect(target, int(self.settings.get("port", config.DEFAULT_PORT)),
+        self._start_connect(ip_text, did_text,
+                            int(self.settings.get("port", config.DEFAULT_PORT)),
                             code, self.home_unattended.get())
 
     def _connect(self):
-        target = self.connect_host.get().strip()
+        ip_text = self.connect_host.get().strip()
+        did_text = self.connect_device_id.get().strip()
         try:
             port = int(self.connect_port.get().strip())
         except ValueError:
             messagebox.showerror("Connect", "Port must be a number.")
             return
         code = self.connect_code.get().strip()
-        self._start_connect(target, port, code, self.use_unattended.get())
+        self._start_connect(ip_text, did_text, port, code, self.use_unattended.get())
 
-    def _start_connect(self, target: str, port: int, code: str, unattended: bool):
-        if not target:
-            messagebox.showerror("Connect", "Enter an IP/hostname or pick a Saved Device.")
+    def _start_connect(self, ip_text: str, device_id_text: str, port: int,
+                       code: str, unattended: bool):
+        mode = self.conn_type_var.get()
+        decision = connect_target.validate_connect_input(
+            ip_text, device_id_text, mode,
+            self.settings.get("signaling_url", ""))
+        if decision["action"] == "error":
+            self.connect_status_var.set(decision["error"])
+            self._log(f"Connect blocked: {decision['error']}")
             return
-        self.connect_status_var.set(f"Connecting to {target}:{port} …")
-        self._log(f"Connecting to {target}:{port} …")
+        label = ip_text or format_device_id(decision["device_id"])
+        self.connect_status_var.set(f"Resolving {label} …")
+        self._log(f"Connecting ({mode}) to {label} …")
         threading.Thread(target=self._connect_thread,
-                         args=(target, port, code, unattended), daemon=True).start()
+                         args=(decision, port, code, unattended, label),
+                         daemon=True).start()
 
-    def _resolve_target(self, target: str) -> tuple[str | None, str | None]:
-        """Resolve a Device ID / Name / IP / hostname to a connectable host.
+    def _resolve_target(self, decision: dict, default_port: int) -> tuple[str, int, str | None]:
+        """Resolve a validated decision to (host, port, error).
 
-        Returns (host, error). Device IDs and saved-device names are
-        resolved via a short LAN discovery scan — a trusted device with
-        no reachable address is an error, never a guessed address.
+        - direct: use the IP/hostname as-is.
+        - lan_scan: short LAN discovery scan for the Device ID.
+        - signaling_lookup: ask the signaling server for the IP.
+        Never raises; failures return (\"\", port, error).
         """
-        t = target.strip()
-        digits = re.sub(r"\D", "", t)
-        if t.replace(" ", "").isdigit() and len(digits) == 9:
-            self._log(f"Looking up device {format_device_id(digits)} on LAN…")
+        action = decision["action"]
+        if action == "direct":
+            return decision["host"], decision["port"] or default_port, None
+        if action == "lan_scan":
+            did = decision["device_id"]
+            self.msg_queue.put(("connect_status", f"Resolving {format_device_id(did)} on LAN …"))
+            self._log(f"Looking up device {format_device_id(did)} on LAN…")
             found = DiscoveryListener(duration_s=3.0).scan()
-            info = found.get(digits)
+            info = found.get(did)
             if info and info.get("address"):
-                return info["address"], None
-            return None, (f"Device {format_device_id(digits)} not found on this LAN — "
-                          "check hosting is ON on that PC and both PCs are on the "
-                          "same Wi-Fi, or enter its IP directly.")
-        for d in storage.load_trusted():
-            if d.get("device_name", "").strip().lower() == t.lower():
-                did = re.sub(r"\D", "", d.get("device_id", ""))
-                found = DiscoveryListener(duration_s=3.0).scan()
-                info = found.get(did)
-                if info and info.get("address"):
-                    return info["address"], None
-                return None, (f"Saved device '{d.get('device_name')}' not found on this LAN — "
-                              "check hosting is ON on that PC and both PCs are on the "
-                              "same Wi-Fi, or enter its IP directly.")
-        if _HOSTNAME_RE.match(t):
-            return t, None
-        return None, "Enter an IP/hostname or pick a Saved Device."
+                return info["address"], default_port, None
+            return "", default_port, (
+                f"Device {format_device_id(did)} not found on this LAN — check hosting "
+                "is ON on that PC and both PCs are on the same Wi-Fi, or enter its IP "
+                "directly, or use Signaling Server mode (Settings → Network).")
+        if action == "signaling_lookup":
+            did = decision["device_id"]
+            self.msg_queue.put(("connect_status",
+                                f"Resolving {format_device_id(did)} via signaling server …"))
+            peer, error = signaling.lookup_device(
+                self.settings.get("signaling_url", ""), did)
+            if error:
+                return "", default_port, error
+            return peer["ip"], int(peer.get("port", default_port)), None
+        return "", default_port, "Connect input samajh nahi aaya."
 
-    def _connect_thread(self, target, port, code, unattended):
-        host, error = self._resolve_target(target)
+    def _connect_thread(self, decision, port, code, unattended, label):
+        host, resolved_port, error = self._resolve_target(decision, port)
         if error is not None:
             self.msg_queue.put(("connect_status", error))
             self.msg_queue.put(("viewer_status", f"Connection failed: {error}"))
             self._log(f"Connection failed: {error}")
             return
+        self.msg_queue.put(("connect_status", f"Connecting to {host}:{resolved_port} …"))
+        self.msg_queue.put(("viewer_status", f"Connecting to {host}:{resolved_port} …"))
+        self._log(f"Connecting to {host}:{resolved_port} …")
         if unattended:
-            ok, msg = self.client.connect(host, port, unattended_password=code)
+            ok, msg = self.client.connect(host, resolved_port, unattended_password=code)
         else:
-            ok, msg = self.client.connect(host, port, pairing_code=code)
+            ok, msg = self.client.connect(host, resolved_port, pairing_code=code)
         if ok:
+            self.msg_queue.put(("connect_status", "Waiting for host…"))
             self._session_start = time.time()
-            self._session_peer = target
+            self._session_peer = label
             self._session_host = host
-            self._record_history(target, host, "Remote Control", "Connected")
-            self.msg_queue.put(("viewer_status", f"Connected to {host}:{port}."))
-            self.msg_queue.put(("connect_status", f"Connected to {host}:{port}."))
+            self._record_history(label, host, "Remote Control", "Connected")
+            self.msg_queue.put(("viewer_status", f"Connected to {host}:{resolved_port}."))
+            self.msg_queue.put(("connect_status", f"Connected to {host}:{resolved_port}."))
             self.msg_queue.put(("file_status", "Session active."))
             self.msg_queue.put(("show_page", "Viewer"))
         else:
             if "Could not connect" in msg:
-                detail = (f"Host not reachable at {host}:{port} — check hosting ON, "
-                          "same Wi-Fi for LAN, or Public IP + port mapping for "
-                          f"Internet. ({msg})")
+                detail = (f"Host not reachable at {host}:{resolved_port} — check hosting ON, "
+                          "same Wi-Fi for LAN, Public IP + port mapping for Internet, "
+                          f"or signaling registration. ({msg})")
             else:
                 detail = msg
             self.msg_queue.put(("viewer_status", f"Connection failed: {detail}"))
             self.msg_queue.put(("connect_status", f"Connection failed: {detail}"))
             self._log(f"Connection failed: {detail}")
+
+    # ------------------------------------------------------------- Find on LAN
+    def _find_on_lan_home(self):
+        self._find_on_lan_fill(self.home_ip, self.home_device_id)
+
+    def _find_on_lan_rc(self):
+        self._find_on_lan_fill(self.connect_host, self.connect_device_id)
+
+    def _find_on_lan_fill(self, ip_entry, id_entry):
+        """Scan the LAN, then fill the IP field (chooser if several found)."""
+        self.connect_status_var.set("Scanning LAN for devices (5 seconds)…")
+        self._log("Find on LAN: scanning (5 seconds)…")
+
+        def _thread():
+            found = DiscoveryListener(duration_s=5.0).scan()
+            self.root.after(0, lambda: self._after_find_on_lan(found, ip_entry, id_entry))
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def _after_find_on_lan(self, found, ip_entry, id_entry):
+        if not found:
+            self.connect_status_var.set(
+                "LAN pe koi device nahi mila — check karo host pe hosting ON hai "
+                "aur dono PCs ek hi Wi-Fi pe hain.")
+            return
+        items = list(found.items())
+        if len(items) == 1:
+            did, info = items[0]
+            self._fill_ip_id(ip_entry, id_entry, info.get("address", ""), did)
+            return
+        # Several found — let the user pick one.
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Found on LAN — pick a device")
+        dlg.geometry("440x260")
+        dlg.configure(bg=self.theme["card"])
+        dlg.transient(self.root)
+        dlg.grab_set()
+        tk.Label(dlg, text="Found on LAN — pick a device",
+                 font=("Segoe UI", 12, "bold"), bg=self.theme["card"],
+                 fg=self.theme["fg"]).pack(padx=16, pady=(12, 6), anchor="w")
+        box = tk.Listbox(dlg, relief="flat", font=("Segoe UI", 10), height=6)
+        self._role(box, "listbox")
+        box.pack(fill="both", expand=True, padx=16)
+        for did, info in items:
+            box.insert("end", f"{info.get('device_name')} (ID {format_device_id(did)}) — {info.get('address')}")
+
+        def _pick():
+            sel = box.curselection()
+            if not sel:
+                return
+            did, info = items[sel[0]]
+            self._fill_ip_id(ip_entry, id_entry, info.get("address", ""), did)
+            dlg.destroy()
+
+        self._btn(dlg, "Use this device", _pick, "primary").pack(padx=16, pady=10, anchor="w")
+
+    def _fill_ip_id(self, ip_entry, id_entry, ip, did):
+        try:
+            ip_entry.delete(0, "end")
+            ip_entry.insert(0, ip)
+            id_entry.delete(0, "end")
+            id_entry.insert(0, format_device_id(did))
+        except tk.TclError:
+            pass
+        self.connect_status_var.set(f"Found device {format_device_id(did)} at {ip} — IP filled in.")
+        self._log(f"Find on LAN: filled {format_device_id(did)} at {ip}.")
 
     def _disconnect(self):
         was_connected = bool(self.client.connected)
@@ -1781,6 +2073,18 @@ class RemoteDeskApp:
         storage.save_settings(self.settings)
         messagebox.showinfo("Settings", "Session options saved.")
         self._log("Session options saved.")
+
+    def _save_signaling(self):
+        url = signaling.normalize_server_url(self.signaling_url_var.get())
+        self.settings["signaling_url"] = url
+        self.settings["signaling_auto_register"] = bool(self.signaling_auto_var.get())
+        storage.save_settings(self.settings)
+        self.signaling_url_var.set(url)
+        self._update_signaling_status()
+        messagebox.showinfo("Signaling server",
+                            "Signaling settings saved. Both PCs must use the "
+                            "same server URL for Device ID lookup.")
+        self._log("Signaling settings saved.")
 
     def _save_network(self):
         try:
