@@ -4,7 +4,7 @@
 ; Version is read from the app at build time — update app/version.py, then rebuild.
 
 #define MyAppName "RemoteDesk"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "Shoaib Azeez"
 #define MyAppExeName "RemoteDesk.exe"
 

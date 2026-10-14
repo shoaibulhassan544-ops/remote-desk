@@ -8,20 +8,28 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
-## What it does (v1.0.0 — LAN MVP)
+## What it does (v1.0.2 — LAN MVP + VIP UI + in-app updates)
 
-- Dashboard with your device ID, hosting toggle, connect panel, activity log
+- VIP sidebar UI (1000×680): Dashboard, Viewer, File Transfer, Trusted Devices,
+  History, Security, Diagnostics, Settings & About + header status pill
+  (Idle / Hosting ON / Connected) + instant dark/light theme toggle
+- Dashboard "How to connect — 4 steps" card: host → Start Hosting + pairing code,
+  note host IP + code, controller enters IP + port 47900 + code → Connect,
+  host clicks Accept. No username needed. Both PCs on the same Wi-Fi.
 - Assisted access: incoming request dialog (Accept/Reject + permission checkboxes)
 - Real screen streaming over TLS (mss + JPEG), viewer with mouse/keyboard input
 - Permission-gated file transfer (no traversal, never auto-executes)
 - Optional clipboard sync (off by default)
 - Trusted devices, session history, security settings, network diagnostics
-- Dark / light themes, compact tabbed UI
-- **Update popup with NO server**: the app checks GitHub Releases for a newer
-  version and shows "New update available — Download / Later".
+- **In-app update download with NO server**: the app checks GitHub Releases
+  for a newer version and shows a popup with changelog + progress bar;
+  [Download Update] downloads the installer inside the app to
+  `~/Downloads/RemoteDesk-Updates/`, then [Run Installer] (user-clicked only,
+  never auto-executed). Browser redirect is only a fallback when no installer
+  asset exists or the download fails.
   See [docs/SETUP_UPDATE.md](docs/SETUP_UPDATE.md).
 
-## What it does NOT do in v1.0.0
+## What it does NOT do in v1.0.2
 
 - **No internet relay.** Internet mode needs port-forward/VPN or a deployed
   STUN/TURN relay (see [docs/TURN-DEPLOYMENT.md](docs/TURN-DEPLOYMENT.md)).
