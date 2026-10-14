@@ -4,7 +4,7 @@
 ; Version is read from the app at build time — update app/version.py, then rebuild.
 
 #define MyAppName "RemoteDesk"
-#define MyAppVersion "1.0.6"
+#define MyAppVersion "1.0.7"
 #define MyAppPublisher "Shoaib Azeez"
 #define MyAppExeName "RemoteDesk.exe"
 
@@ -49,10 +49,36 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; v1.0.7 — DESKTOP ICON FIX (bulletproof): ship our own icon.ico as a file
+; inside {app}, so the desktop + Start Menu shortcuts can point at it
+; DIRECTLY (IconFilename below). If the EXE's embedded icon ever fails,
+; the desktop icon still shows our logo instead of the generic default.
+Source: "assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\icon.ico"
+
+[Code]
+// v1.0.7 — INSTALL WHILE APP IS RUNNING (fully automatic):
+// CloseApplications / RestartApplications (above, v1.0.6) use the Windows
+// Restart Manager, which can STILL pop up the "unable to close
+// applications" dialog on some systems. Belt + suspenders: right before
+// the files are replaced, force-close any running RemoteDesk.exe
+// silently (no window, no prompt). Errors are ignored — e.g. the app
+// simply wasn't running — so the install never fails because of this.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssInstall then
+  begin
+    try
+      Exec('taskkill.exe', '/F /IM RemoteDesk.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    except
+    end;
+  end;
+end;
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

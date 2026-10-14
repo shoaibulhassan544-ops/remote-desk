@@ -8,6 +8,45 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
+## What it does (v1.0.7 — 3 real bug fixes + fresh UI rebuild)
+
+- **BUG A FIXED — Address (Device ID) now resolves on LAN.** The host
+  never broadcast its presence before, so LAN scan found nothing and a
+  Device ID could never resolve. `HostServer.start()` now starts a
+  `DiscoveryBroadcaster` (LAN broadcast + loopback, presence-only),
+  and `start()` waits until the server is actually listening, so an
+  immediate connect no longer races TLS key generation ("Connection
+  refused"). If broadcast fails, hosting still starts (logged).
+- **BUG B FIXED — IP connect now gives REAL access.** (1) The Accept
+  popup's Control checkbox now defaults ON (host can still untick it),
+  so sessions are no longer silently view-only. (2) The host sends its
+  real screen size (w/h) with every frame; the viewer scales canvas
+  clicks → host coords, so clicks land on the right folder/button.
+  (3) The viewer shows "Waiting for screen…" until the first frame
+  and a visible "Control: ON/OFF" indicator. Proven by a loopback
+  test: host + client in-process, ≥1 frame received AND an input
+  event reaching the host.
+- **BUG C FIXED — small update popup, never-empty changelog.** The
+  popup is now ~520×420 with ONLY [Download Update] [Later] (buttons
+  in a grid with weights — no clipped "Later"). "What's new" uses a
+  built-in changelog map when the GitHub Release body is empty, so it
+  is never blank. Download starts immediately in-thread with live
+  progress; on success the button becomes [Run Installer].
+- **FRESH UI REBUILD** — `app/ui.py` deleted and rewritten from
+  scratch in the same Option 1 AnyDesk Blue tokens (no leftover
+  v1.0.4/v1.0.5 layout code).
+- **Installer (v1.0.7):** `setup.iss` now ships `assets\icon.ico` into
+  `{app}` AND both shortcuts (Start Menu + desktop) use
+  `IconFilename="{app}\icon.ico"` directly — the desktop icon shows
+  our logo even if EXE embedding ever fails. Install-while-running is
+  now fully automatic: a `[Code]` `CurStepChanged` hook silently
+  force-closes `RemoteDesk.exe` (`taskkill /F`, errors ignored)
+  before files are replaced, on top of the v1.0.6 Restart Manager
+  lines. CI now FAILS the build if the EXE has no icon resources
+  (pefile check for RT_GROUP_ICON / RT_ICON). `icon.ico` rebuilt
+  with all sizes: 16, 24, 32, 48, 64, 128, 256.
+- Ship only v1.0.7+.
+
 ## What it does (v1.0.6 — v1.0.5 flow + installer auto-close fix)
 
 - **FINAL FLOW — Address → Connect → Host Accept. No pairing code.**
@@ -39,7 +78,7 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
   If Windows still shows the old icon: uninstall old version first +
   clear the icon cache (see docs/TROUBLESHOOTING.md).
 - Pairing codes were REMOVED from the assisted flow in v1.0.5
-  (PairingCodeStore kept only for compatibility). Ship only v1.0.6+.
+  (PairingCodeStore kept only for compatibility). Ship only v1.0.7+.
 - v1.0.6 installer fix: the installer now auto-closes a running
   RemoteDesk (Restart Manager) before replacing files. Before v1.0.6,
   upgrading while the app was running failed with "DeleteFile failed;
