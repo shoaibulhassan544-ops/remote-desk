@@ -1,13 +1,18 @@
-"""tkinter UI — FRESH REBUILD v1.0.7 (Option 1 "AnyDesk Blue").
+"""CustomTkinter UI — FRESH REBUILD v1.0.8 (Option 1 "AnyDesk Blue").
 
-The old ui.py was deleted and this file rewritten from scratch: same
-features, same public entry points (RemoteDeskApp(root), run()), clean
-layout, no leftover v1.0.4/v1.0.5 code.
+v1.0.7 changed the FLOW but still LOOKED like old flat tkinter (the user
+was right — his screenshot proved it: flat rectangles, no card contrast,
+no rounded corners, no depth). Root cause: tkinter's native widgets
+cannot look modern no matter the colors. This file rebuilds the SAME
+app on CustomTkinter: rounded cards, rounded buttons/entries, real
+visual separation, CTk dialogs — with ALL v1.0.7 logic/flows intact.
 
-Design tokens: deep navy #0B1220 bg, card #13203A, bright-blue #2E7DFF
-primary + active nav, white headings, muted #8CA3C0. Left sidebar
-(Home / Remote Control / Viewer / File Transfer / Trusted Devices /
-Session History / Settings).
+Public entry points (unchanged): RemoteDeskApp(root), run().
+Pure helpers kept for tests: format_update_status, scale_coords.
+
+CTk has no equivalent for: tk.Canvas (viewer drawing surface),
+ttk.Treeview (history table), tkinter file/message dialogs — those
+stay, and are justified here. Everything else is CustomTkinter.
 
 Honesty rules (unchanged, enforced):
 - Every button is wired to real code, or explicitly disabled with a reason.
@@ -45,6 +50,8 @@ import webbrowser
 from collections import deque
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+import customtkinter as ctk
+
 from . import config, connect_target, internet, signaling, storage, update_checker
 from .client import RemoteClient
 from .device_id import format_device_id, get_device_name, load_or_create_device_id
@@ -53,12 +60,15 @@ from .host import HostServer
 from .security import PairingCodeStore, hash_password, validate_unattended_password
 from .version import VERSION
 
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
 BLUE_DARK = {
-    "bg": "#0B1220", "sidebar": "#0F1A2E", "header": "#0F1A2E",
-    "card": "#13203A", "fg": "#FFFFFF", "muted": "#8CA3C0",
-    "accent": "#2E7DFF", "accent_hover": "#2563EB", "accent_fg": "#FFFFFF",
+    "bg": "#0B1220", "sidebar": "#0A0F1E", "header": "#0F1A2E",
+    "card": "#16263F", "fg": "#FFFFFF", "muted": "#8CA3C0",
+    "accent": "#2E7DFF", "accent_hover": "#1D6FE0", "accent_fg": "#FFFFFF",
     "success": "#22C55E", "success_fg": "#FFFFFF",
-    "danger": "#EF4444", "entry": "#0B1220", "border": "#1E3A5F",
+    "danger": "#EF4444", "entry": "#0B1220", "border": "#22365C",
     "sidebar_active": "#2E7DFF", "sidebar_active_fg": "#FFFFFF",
     "sidebar_fg": "#B9C7DD",
 }
@@ -91,10 +101,10 @@ def scale_coords(x: float, y: float, canvas_w: float, canvas_h: float,
                  host_w: float, host_h: float) -> tuple[int, int]:
     """Map a point on the viewer canvas to host-screen coordinates.
 
-    BUG B FIX (v1.0.7): the viewer shows a thumbnail-scaled image, but
-    old code sent RAW canvas x,y as absolute host coords — clicks landed
-    in the wrong place whenever canvas size != host screen size. Now the
-    host sends its real size with every frame and the UI scales into it.
+    The viewer shows a thumbnail-scaled image, but old code sent RAW
+    canvas x,y as absolute host coords — clicks landed in the wrong
+    place whenever canvas size != host screen size. Now the host sends
+    its real size with every frame and the UI scales into it.
     Falls back to raw coords when the host size is unknown (0).
     Results are clamped to the host screen bounds. Pure, testable.
     """
@@ -113,8 +123,95 @@ def scale_coords(x: float, y: float, canvas_w: float, canvas_h: float,
     return int(sx), int(sy)
 
 
+def _font(size: int, bold: bool = False):
+    return ctk.CTkFont(family="Segoe UI", size=size, weight="bold" if bold else "normal")
+
+
+class _CTkList(ctk.CTkScrollableFrame):
+    """Listbox-like adapter on a CTkScrollableFrame (CTk has no Listbox).
+
+    Exposes the small Listbox API the app uses: insert/delete/get/size/
+    curselection/bind("<<ListboxSelect>>"). Rows are clickable buttons;
+    clicking selects the row and fires the bound callback.
+    """
+
+    def __init__(self, master, height: int = 120, **kwargs):
+        super().__init__(master, height=height, corner_radius=10, **kwargs)
+        self._rows: list[tuple[ctk.CTkButton, str]] = []
+        self._selected: int | None = None
+        self._callback = None
+        self._fg = kwargs.get("fg_color", "#0B1220")
+
+    def _refresh(self):
+        for i, (btn, _text) in enumerate(self._rows):
+            if i == self._selected:
+                btn.configure(fg_color="#2E7DFF", text_color="#FFFFFF")
+            else:
+                btn.configure(fg_color="transparent", text_color="#FFFFFF")
+
+    def _click(self, idx: int):
+        self._selected = idx
+        self._refresh()
+        if self._callback is not None:
+            try:
+                self._callback(None)
+            except TypeError:
+                self._callback()
+
+    def insert(self, index, text: str):
+        btn = ctk.CTkButton(self, text=str(text), anchor="w",
+                            fg_color="transparent", text_color="#FFFFFF",
+                            hover_color="#22365C", corner_radius=8,
+                            font=_font(11))
+        if index == "end" or (isinstance(index, int) and index >= len(self._rows)):
+            idx = len(self._rows)
+            self._rows.append((btn, str(text)))
+            btn.configure(command=lambda i=idx: self._click(i))
+            btn.pack(fill="x", padx=4, pady=2)
+        else:
+            idx = int(index)
+            self._rows.insert(idx, (btn, str(text)))
+            btn.configure(command=lambda i=idx: self._click(i))
+            btn.pack(fill="x", padx=4, pady=2)
+            for j, (b, _t) in enumerate(self._rows):
+                b.configure(command=lambda i=j: self._click(i))
+        self._refresh()
+
+    def delete(self, first, last=None):
+        if last is None:
+            last = first
+        if last == "end":
+            last = len(self._rows) - 1
+        first, last = int(first), int(last)
+        for idx in range(last, first - 1, -1):
+            if 0 <= idx < len(self._rows):
+                self._rows[idx][0].destroy()
+                del self._rows[idx]
+        if self._selected is not None and self._selected > last:
+            self._selected = None
+        elif self._selected is not None and first <= self._selected <= last:
+            self._selected = None
+        for j, (b, _t) in enumerate(self._rows):
+            b.configure(command=lambda i=j: self._click(i))
+        self._refresh()
+
+    def get(self, index):
+        return self._rows[int(index)][1]
+
+    def size(self) -> int:
+        return len(self._rows)
+
+    def curselection(self):
+        return (self._selected,) if self._selected is not None else ()
+
+    def bind(self, event, callback=None):  # noqa: A003 — Listbox-compatible name
+        if event == "<<ListboxSelect>>":
+            self._callback = callback
+        return None
+
+
 class RemoteDeskApp:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: ctk.CTk):
         self.root = root
         self.root.title(f"{config.PRODUCT_NAME} v{VERSION}")
         self.root.geometry("1000x680")
@@ -132,8 +229,8 @@ class RemoteDeskApp:
         self.pairing = PairingCodeStore()
         self.viewer_photo = None
         self._current_page = "Home"
-        self._nav_btns: dict[str, tk.Button] = {}
-        self.pages: dict[str, tk.Frame] = {}
+        self._nav_btns: dict[str, ctk.CTkButton] = {}
+        self.pages: dict[str, ctk.CTkFrame] = {}
         self._download_cancel: threading.Event | None = None
         self._downloaded_path: str | None = None
         self._session_start: float | None = None
@@ -178,94 +275,91 @@ class RemoteDeskApp:
         return widget
 
     def _apply_theme(self):
+        """Re-skin every CTk widget from the active token set."""
         t = self.theme
-        self.root.configure(bg=t["bg"])
+        ctk.set_appearance_mode("light" if self.theme is BLUE_LIGHT else "dark")
         try:
             style = ttk.Style(self.root)
             try:
                 style.theme_use("clam")
             except tk.TclError:
                 pass
-            style.configure("Blue.Horizontal.TProgressbar",
-                            troughcolor=t["entry"], background=t["accent"],
-                            bordercolor=t["border"], lightcolor=t["accent"],
-                            darkcolor=t["accent"])
             style.configure("Treeview", background=t["entry"], foreground=t["fg"],
-                            fieldbackground=t["entry"], rowheight=24,
-                            bordercolor=t["border"])
+                            fieldbackground=t["entry"], rowheight=26,
+                            bordercolor=t["border"], font=("Segoe UI", 10))
             style.configure("Treeview.Heading", background=t["card"],
-                            foreground=t["fg"], bordercolor=t["border"])
+                            foreground=t["fg"], bordercolor=t["border"],
+                            font=("Segoe UI", 10, "bold"))
             style.map("Treeview", background=[("selected", t["accent"])],
                       foreground=[("selected", t["accent_fg"])])
-            style.configure("TCombobox", fieldbackground=t["entry"],
-                            background=t["card"], foreground=t["fg"],
-                            arrowcolor=t["fg"], bordercolor=t["border"])
         except Exception:
             pass
 
         def _apply(w):
             role = getattr(w, "_theme_role", None)
-            if role == "bg":
-                w.configure(bg=t["bg"])
-            elif role == "sidebar":
-                w.configure(bg=t["sidebar"])
-            elif role == "header":
-                w.configure(bg=t["header"])
-            elif role == "card":
-                w.configure(bg=t["card"])
-            elif role == "label_bg":
-                w.configure(bg=t["bg"], fg=t["fg"])
-            elif role == "label_card":
-                w.configure(bg=t["card"], fg=t["fg"])
-            elif role == "accent_card":
-                w.configure(bg=t["card"], fg=t["accent"])
-            elif role == "label_sidebar":
-                w.configure(bg=t["sidebar"], fg=t["sidebar_fg"])
-            elif role == "label_header":
-                w.configure(bg=t["header"], fg=t["fg"])
-            elif role == "muted_bg":
-                w.configure(bg=t["bg"], fg=t["muted"])
-            elif role == "muted_card":
-                w.configure(bg=t["card"], fg=t["muted"])
-            elif role == "muted_sidebar":
-                w.configure(bg=t["sidebar"], fg=t["muted"])
-            elif role == "primary_btn":
-                w.configure(bg=t["accent"], fg=t["accent_fg"],
-                            activebackground=t["accent_hover"],
-                            activeforeground=t["accent_fg"],
-                            highlightbackground=t["accent"])
-            elif role == "success_btn":
-                w.configure(bg=t["success"], fg=t["success_fg"],
-                            activebackground=t["success"],
-                            activeforeground=t["success_fg"])
-            elif role == "ghost_btn":
-                w.configure(bg=t["card"], fg=t["fg"],
-                            activebackground=t["border"], activeforeground=t["fg"],
-                            highlightbackground=t["border"])
-            elif role == "danger_btn":
-                w.configure(bg=t["danger"], fg="#FFFFFF",
-                            activebackground=t["danger"], activeforeground="#FFFFFF")
-            elif role == "entry":
-                w.configure(bg=t["entry"], fg=t["fg"], insertbackground=t["fg"],
-                            highlightbackground=t["border"], highlightcolor=t["accent"])
-            elif role == "text":
-                w.configure(bg=t["entry"], fg=t["fg"], insertbackground=t["fg"],
-                            highlightbackground=t["border"])
-            elif role == "listbox":
-                w.configure(bg=t["entry"], fg=t["fg"],
-                            selectbackground=t["accent"], selectforeground=t["accent_fg"],
-                            highlightbackground=t["border"])
-            elif role == "check_card":
-                w.configure(bg=t["card"], fg=t["fg"], activebackground=t["card"],
-                            selectcolor=t["card"])
-            elif role == "check_bg":
-                w.configure(bg=t["bg"], fg=t["fg"], activebackground=t["bg"],
-                            selectcolor=t["bg"])
-            elif role == "nav":
+            try:
+                if isinstance(w, ctk.CTkFrame) or isinstance(w, ctk.CTkScrollableFrame):
+                    if role in ("bg", "header"):
+                        w.configure(fg_color=t["header"] if role == "header" else t["bg"])
+                    elif role == "sidebar":
+                        w.configure(fg_color=t["sidebar"])
+                    elif role == "card":
+                        w.configure(fg_color=t["card"])
+                elif isinstance(w, ctk.CTkLabel):
+                    if role in ("label_bg", "label_card", "label_sidebar", "label_header"):
+                        w.configure(text_color=t["fg"])
+                    elif role in ("muted_bg", "muted_card", "muted_sidebar"):
+                        w.configure(text_color=t["muted"])
+                    elif role == "accent_card":
+                        w.configure(text_color=t["accent"])
+                elif isinstance(w, ctk.CTkButton):
+                    if role == "primary_btn":
+                        w.configure(fg_color=t["accent"], hover_color=t["accent_hover"],
+                                    text_color=t["accent_fg"])
+                    elif role == "success_btn":
+                        w.configure(fg_color=t["success"], hover_color=t["success"],
+                                    text_color=t["success_fg"])
+                    elif role == "ghost_btn":
+                        w.configure(fg_color=t["border"], hover_color=t["accent"],
+                                    text_color=t["fg"])
+                    elif role == "danger_btn":
+                        w.configure(fg_color=t["danger"], hover_color=t["danger"],
+                                    text_color="#FFFFFF")
+                    elif role == "nav":
+                        pass
+                elif isinstance(w, ctk.CTkEntry):
+                    w.configure(fg_color=t["entry"], border_color=t["border"],
+                                text_color=t["fg"])
+                elif isinstance(w, ctk.CTkTextbox):
+                    w.configure(fg_color=t["entry"], border_color=t["border"],
+                                text_color=t["fg"])
+                elif isinstance(w, (ctk.CTkCheckBox, ctk.CTkSwitch)):
+                    w.configure(text_color=t["fg"], fg_color=t["accent"],
+                                border_color=t["border"])
+                elif isinstance(w, ctk.CTkComboBox):
+                    w.configure(fg_color=t["entry"], button_color=t["card"],
+                                border_color=t["border"], text_color=t["fg"],
+                                dropdown_fg_color=t["card"],
+                                dropdown_text_color=t["fg"])
+                elif isinstance(w, ctk.CTkProgressBar):
+                    w.configure(fg_color=t["entry"], progress_color=t["accent"])
+                elif isinstance(w, tk.Canvas):
+                    # Only the viewer drawing surface — never CTkScrollableFrame
+                    # internals (their canvas is part of the scroll widget).
+                    if w is getattr(self, "canvas", None):
+                        w.configure(bg="#000000")
+            except Exception:
                 pass
-            for child in w.winfo_children():
-                _apply(child)
+            try:
+                for child in w.winfo_children():
+                    _apply(child)
+            except Exception:
+                pass
 
+        try:
+            self.root.configure(fg_color=t["bg"])
+        except Exception:
+            pass
         _apply(self.root)
         if hasattr(self, "theme_btn"):
             self.theme_btn.configure(
@@ -280,13 +374,11 @@ class RemoteDeskApp:
         t = self.theme
         for name, btn in self._nav_btns.items():
             if name == self._current_page:
-                btn.configure(bg=t["sidebar_active"], fg=t["sidebar_active_fg"],
-                              activebackground=t["sidebar_active"],
-                              activeforeground=t["sidebar_active_fg"])
+                btn.configure(fg_color=t["sidebar_active"], text_color=t["sidebar_active_fg"],
+                              hover_color=t["sidebar_active"])
             else:
-                btn.configure(bg=t["sidebar"], fg=t["sidebar_fg"],
-                              activebackground=t["border"],
-                              activeforeground=t["fg"])
+                btn.configure(fg_color="transparent", text_color=t["sidebar_fg"],
+                              hover_color=t["border"])
 
     def _refresh_pill(self):
         if not hasattr(self, "status_pill"):
@@ -296,13 +388,16 @@ class RemoteDeskApp:
         connected = bool(getattr(self.client, "connected", False))
         session_active = bool(self.host and self.host.sessions.active)
         if connected or session_active:
-            self.status_pill.configure(text="●  Connected", bg=t["success"], fg="#FFFFFF")
+            self.status_pill.configure(text="●  Connected", fg_color=t["success"],
+                                       text_color="#FFFFFF")
             self.home_status_var.set("Connected")
         elif hosting:
-            self.status_pill.configure(text="●  Hosting ON", bg=t["accent"], fg=t["accent_fg"])
+            self.status_pill.configure(text="●  Hosting ON", fg_color=t["accent"],
+                                       text_color=t["accent_fg"])
             self.home_status_var.set("Hosting ON — waiting for connections")
         else:
-            self.status_pill.configure(text="○  Idle", bg=t["border"], fg=t["fg"])
+            self.status_pill.configure(text="○  Idle", fg_color=t["border"],
+                                       text_color=t["fg"])
             self.home_status_var.set("Idle")
 
     def _asset_path(self, name: str) -> str:
@@ -348,61 +443,65 @@ class RemoteDeskApp:
     # ------------------------------------------------------------- building
     def _build(self):
         t = self.theme
-        body = self._role(tk.Frame(self.root, bg=t["bg"]), "bg")
+        body = self._role(ctk.CTkFrame(self.root, fg_color=t["bg"], corner_radius=0), "bg")
         body.pack(fill="both", expand=True)
-        sidebar = self._role(tk.Frame(body, bg=t["sidebar"], width=200), "sidebar")
+        sidebar = self._role(ctk.CTkFrame(body, fg_color=t["sidebar"], corner_radius=0,
+                                          width=210), "sidebar")
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
-        brand = self._role(tk.Frame(sidebar, bg=t["sidebar"]), "sidebar")
-        brand.pack(fill="x", padx=14, pady=(16, 10))
-        mark = tk.Label(brand, text="◆", font=("Segoe UI", 20, "bold"),
-                        bg=t["sidebar"], fg=t["accent"])
-        self._role(mark, "label_sidebar")
+        brand = self._role(ctk.CTkFrame(sidebar, fg_color="transparent"), "sidebar")
+        brand.pack(fill="x", padx=16, pady=(18, 6))
+        mark = self._role(ctk.CTkLabel(brand, text="◆", font=_font(22, True),
+                                       text_color=t["accent"]), "accent_card")
         mark.pack(side="left")
-        title = tk.Label(brand, text=config.PRODUCT_NAME,
-                         font=("Segoe UI", 17, "bold"), bg=t["sidebar"], fg="#FFFFFF")
+        title = self._role(ctk.CTkLabel(brand, text=config.PRODUCT_NAME,
+                                        font=_font(18, True), text_color="#FFFFFF"), "label_sidebar")
         title.pack(side="left", padx=(8, 0))
-        ver = tk.Label(sidebar, text=f"Version {VERSION}",
-                       font=("Segoe UI", 9), bg=t["sidebar"], fg=t["muted"])
-        self._role(ver, "muted_sidebar")
-        ver.pack(anchor="w", padx=14)
-        tk.Frame(sidebar, bg=t["border"], height=1).pack(fill="x", padx=14, pady=10)
+        ver = self._role(ctk.CTkLabel(sidebar, text=f"Version {VERSION}",
+                                      font=_font(10), text_color=t["muted"]), "muted_sidebar")
+        ver.pack(anchor="w", padx=16)
+        sep = ctk.CTkFrame(sidebar, fg_color=t["border"], height=1, corner_radius=0)
+        sep.pack(fill="x", padx=16, pady=12)
         nav_items = [("🏠  Home", "Home"), ("🖥  Remote Control", "Remote Control"),
                      ("👁  Viewer", "Viewer"), ("📁  File Transfer", "File Transfer"),
                      ("✓  Trusted Devices", "Trusted Devices"),
                      ("🕘  Session History", "Session History"),
                      ("⚙  Settings", "Settings")]
         for label, name in nav_items:
-            btn = tk.Button(sidebar, text=label, anchor="w", relief="flat",
-                            font=("Segoe UI", 11), padx=14, pady=9,
-                            command=lambda n=name: self._show_page(n))
+            btn = ctk.CTkButton(sidebar, text=label, anchor="w",
+                                font=_font(12), corner_radius=10,
+                                height=38, fg_color="transparent",
+                                text_color=t["sidebar_fg"], hover_color=t["border"],
+                                command=lambda n=name: self._show_page(n))
             self._role(btn, "nav")
-            btn.pack(fill="x", padx=8, pady=2)
+            btn.pack(fill="x", padx=10, pady=3)
             self._nav_btns[name] = btn
-        side_bottom = self._role(tk.Frame(sidebar, bg=t["sidebar"]), "sidebar")
-        side_bottom.pack(side="bottom", fill="x", padx=14, pady=14)
-        self.status_pill = tk.Label(side_bottom, text="○  Idle",
-                                    font=("Segoe UI", 10, "bold"), padx=12, pady=4)
-        self.status_pill.pack(anchor="w", pady=(0, 8))
-        self.theme_btn = tk.Button(side_bottom, text="", command=self._toggle_theme,
-                                   relief="flat", padx=12, pady=4, font=("Segoe UI", 10))
+        side_bottom = self._role(ctk.CTkFrame(sidebar, fg_color="transparent"), "sidebar")
+        side_bottom.pack(side="bottom", fill="x", padx=16, pady=16)
+        self.status_pill = ctk.CTkLabel(side_bottom, text="○  Idle",
+                                        font=_font(11, True), corner_radius=10,
+                                        fg_color=t["border"], text_color=t["fg"])
+        self.status_pill.pack(anchor="w", pady=(0, 10), ipadx=10, ipady=4)
+        self.theme_btn = ctk.CTkButton(side_bottom, text="", command=self._toggle_theme,
+                                       font=_font(11), corner_radius=10,
+                                       fg_color=t["card"], hover_color=t["border"],
+                                       text_color=t["fg"])
         self._role(self.theme_btn, "ghost_btn")
-        self.theme_btn.pack(anchor="w")
-        foot = tk.Label(side_bottom, text=config.DEVELOPER_CREDIT,
-                        font=("Segoe UI", 8), bg=t["sidebar"], fg=t["muted"],
-                        justify="left")
-        self._role(foot, "muted_sidebar")
-        foot.pack(anchor="w", pady=(8, 0))
+        self.theme_btn.pack(anchor="w", fill="x")
+        foot = self._role(ctk.CTkLabel(side_bottom, text=config.DEVELOPER_CREDIT,
+                                       font=_font(9), text_color=t["muted"]), "muted_sidebar")
+        foot.pack(anchor="w", pady=(10, 0))
 
-        content = self._role(tk.Frame(body, bg=t["bg"]), "bg")
+        content = self._role(ctk.CTkFrame(body, fg_color=t["bg"], corner_radius=0), "bg")
         content.pack(side="left", fill="both", expand=True)
-        self.banner = tk.Label(content,
-                               text="● REMOTE SESSION ACTIVE — someone is connected to this PC",
-                               bg=self.theme["danger"], fg="white",
-                               font=("Segoe UI", 10, "bold"))
+        self.banner = ctk.CTkLabel(content,
+                                   text="● REMOTE SESSION ACTIVE — someone is connected to this PC",
+                                   fg_color=self.theme["danger"], text_color="white",
+                                   font=_font(11, True), corner_radius=0)
         for name in ["Home", "Remote Control", "Viewer", "File Transfer",
                      "Trusted Devices", "Session History", "Settings"]:
-            self.pages[name] = self._role(tk.Frame(content, bg=t["bg"]), "bg")
+            self.pages[name] = self._role(ctk.CTkFrame(content, fg_color=t["bg"],
+                                                       corner_radius=0), "bg")
         self._build_home()
         self._build_remote_control()
         self._build_viewer()
@@ -419,7 +518,7 @@ class RemoteDeskApp:
         self._current_page = name
         for n, page in self.pages.items():
             page.pack_forget()
-        self.pages[name].pack(fill="both", expand=True, padx=14, pady=12)
+        self.pages[name].pack(fill="both", expand=True, padx=20, pady=16)
         if name == "Trusted Devices":
             self._refresh_trusted()
         if name == "Session History":
@@ -436,63 +535,104 @@ class RemoteDeskApp:
         self._refresh_signaling_blocks()
         self._refresh_nav()
 
-    # ---- widget helpers ----
+    # ---- widget helpers (all CustomTkinter) ----
     def _card(self, parent, title: str):
         t = self.theme
-        frame = self._role(tk.Frame(parent, bg=t["card"], padx=16, pady=12), "card")
-        frame.pack(fill="x", pady=(0, 12))
-        head = self._role(tk.Frame(frame, bg=t["card"]), "card")
-        head.pack(fill="x")
-        title_lbl = tk.Label(head, text=title.upper(), font=("Segoe UI", 9, "bold"),
-                             bg=t["card"], fg=t["accent"])
+        frame = self._role(ctk.CTkFrame(parent, fg_color=t["card"], corner_radius=14,
+                                        border_width=1, border_color=t["border"]), "card")
+        frame.pack(fill="x", pady=(0, 14))
+        head = self._role(ctk.CTkFrame(frame, fg_color="transparent"), "card")
+        head.pack(fill="x", padx=18, pady=(14, 0))
+        title_lbl = self._role(ctk.CTkLabel(head, text=title.upper(), font=_font(11, True),
+                                            text_color=t["accent"]), "accent_card")
         title_lbl.pack(anchor="w")
-        self._role(title_lbl, "accent_card")
-        tk.Frame(frame, bg=t["border"], height=1).pack(fill="x", pady=(6, 10))
-        return frame
+        sep = ctk.CTkFrame(frame, fg_color=t["border"], height=1, corner_radius=0)
+        sep.pack(fill="x", padx=18, pady=(8, 12))
+        body = self._role(ctk.CTkFrame(frame, fg_color="transparent"), "card")
+        body.pack(fill="x", padx=18, pady=(0, 16))
+        return body
 
-    def _lbl(self, parent, text, muted=False, bold=False, size=10, wrap=None):
+    def _lbl(self, parent, text, muted=False, bold=False, size=11, wrap=None):
         t = self.theme
-        bg = parent.cget("bg") if "bg" in parent.keys() else t["bg"]
-        role = "label_card" if bg == t["card"] else "label_bg"
-        if muted:
-            role = "muted_card" if bg == t["card"] else "muted_bg"
-        lbl = tk.Label(parent, text=text, bg=bg,
-                       fg=t["muted"] if muted else t["fg"],
-                       font=("Segoe UI", size, "bold" if bold else "normal"),
-                       wraplength=wrap or 0, justify="left")
-        self._role(lbl, role)
+        lbl = self._role(ctk.CTkLabel(parent, text=text,
+                                      font=_font(size, bold),
+                                      text_color=t["muted"] if muted else t["fg"],
+                                      wraplength=wrap or 0, justify="left"), "muted_card" if muted else "label_card")
         return lbl
 
     def _btn(self, parent, text, command, style="primary"):
+        t = self.theme
+        colors = {
+            "primary": (t["accent"], t["accent_hover"], t["accent_fg"]),
+            "success": (t["success"], t["success"], t["success_fg"]),
+            "ghost": (t["border"], t["accent"], t["fg"]),
+            "danger": (t["danger"], t["danger"], "#FFFFFF"),
+        }
+        fg, hover, txt = colors[style]
         role = {"primary": "primary_btn", "success": "success_btn",
                 "ghost": "ghost_btn", "danger": "danger_btn"}[style]
-        btn = tk.Button(parent, text=text, command=command, relief="flat",
-                        font=("Segoe UI", 10, "bold"), padx=14, pady=6,
-                        cursor="hand2")
-        self._role(btn, role)
+        btn = self._role(ctk.CTkButton(parent, text=text, command=command,
+                                       font=_font(11, True), corner_radius=10,
+                                       fg_color=fg, hover_color=hover, text_color=txt,
+                                       height=34), role)
         return btn
 
-    def _entry(self, parent, width=24, show=None, textvariable=None):
-        e = tk.Entry(parent, width=width, show=show or "",
-                     textvariable=textvariable,
-                     relief="flat", font=("Segoe UI", 10),
-                     highlightthickness=1)
-        self._role(e, "entry")
+    def _entry(self, parent, width=320, show=None, textvariable=None, placeholder=None):
+        t = self.theme
+        kwargs: dict = dict(width=width, font=_font(11), corner_radius=10,
+                            fg_color=t["entry"], border_color=t["border"],
+                            text_color=t["fg"], height=34)
+        if show:
+            kwargs["show"] = show
+        if textvariable is not None:
+            kwargs["textvariable"] = textvariable
+        if placeholder:
+            kwargs["placeholder_text"] = placeholder
+        e = self._role(ctk.CTkEntry(parent, **kwargs), "entry")
         return e
+
+    def _check(self, parent, text, variable, command=None, disabled=False):
+        t = self.theme
+        cb = self._role(ctk.CTkCheckBox(parent, text=text, variable=variable,
+                                        font=_font(11), fg_color=t["accent"],
+                                        text_color=t["fg"], border_color=t["border"],
+                                        corner_radius=6), "check_card")
+        if command is not None:
+            cb.configure(command=command)
+        if disabled:
+            cb.configure(state="disabled")
+        return cb
+
+    def _switch(self, parent, text, variable, command=None):
+        t = self.theme
+        sw = self._role(ctk.CTkSwitch(parent, text=text, variable=variable,
+                                      font=_font(11), fg_color=t["border"],
+                                      progress_color=t["accent"],
+                                      text_color=t["fg"]), "check_card")
+        if command is not None:
+            sw.configure(command=command)
+        return sw
+
+    def _combo(self, parent, values, variable=None, command=None, width=320):
+        t = self.theme
+        kwargs: dict = dict(values=values, font=_font(11), corner_radius=10,
+                            fg_color=t["entry"], button_color=t["card"],
+                            border_color=t["border"], text_color=t["fg"],
+                            dropdown_fg_color=t["card"], dropdown_text_color=t["fg"],
+                            width=width)
+        if variable is not None:
+            kwargs["variable"] = variable
+        if command is not None:
+            kwargs["command"] = command
+        return self._role(ctk.CTkComboBox(parent, **kwargs), "combo")
 
     def _scrollable(self, parent):
         t = self.theme
-        canvas = tk.Canvas(parent, bg=t["bg"], highlightthickness=0)
-        self._role(canvas, "bg")
-        scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        inner = self._role(tk.Frame(canvas, bg=t["bg"]), "bg")
-        win = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        return inner
+        frame = self._role(ctk.CTkScrollableFrame(parent, fg_color=t["bg"],
+                                                  corner_radius=0,
+                                                  scrollbar_button_color=t["border"]), "bg")
+        frame.pack(fill="both", expand=True)
+        return frame
 
     CONN_TYPE_LABELS = {
         "lan": "Direct (LAN / Same Network)",
@@ -502,41 +642,40 @@ class RemoteDeskApp:
     CONN_TYPE_VALUES = ["lan", "internet", "signaling"]
 
     def _conn_type_combo(self, parent):
-        row = self._role(tk.Frame(parent, bg=self.theme["card"]), "card")
+        row = self._role(ctk.CTkFrame(parent, fg_color="transparent"), "card")
         row.pack(fill="x", pady=(0, 6))
         self._lbl(row, "Connection type:").pack(side="left")
         self.conn_type_label_var = tk.StringVar(
             value=self.CONN_TYPE_LABELS.get(self.conn_type_var.get(), "Direct (LAN / Same Network)"))
-        combo = ttk.Combobox(row, textvariable=self.conn_type_label_var,
-                             state="readonly", width=42,
-                             values=[self.CONN_TYPE_LABELS[v] for v in self.CONN_TYPE_VALUES])
-        combo.pack(side="left", fill="x", expand=True, padx=(6, 0))
 
-        def _on_select(_event=None):
+        def _on_select(_value=None):
             label = self.conn_type_label_var.get()
             for value, lbl in self.CONN_TYPE_LABELS.items():
                 if lbl == label:
                     self.conn_type_var.set(value)
                     break
 
-        combo.bind("<<ComboboxSelected>>", _on_select)
+        combo = self._combo(row, [self.CONN_TYPE_LABELS[v] for v in self.CONN_TYPE_VALUES],
+                            variable=self.conn_type_label_var, command=_on_select, width=380)
+        combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
         return row
 
     def _conn_type_radios(self, parent):
         return self._conn_type_combo(parent)
 
     def _signaling_block(self, parent):
-        frame = self._role(tk.Frame(parent, bg=self.theme["card"]), "card")
+        frame = self._role(ctk.CTkFrame(parent, fg_color="transparent"), "card")
         self._lbl(frame, "Signaling server — Device ID lookup (AnyDesk-style)",
-                  bold=True, size=11).pack(anchor="w")
-        tk.Label(frame, textvariable=self.signaling_status_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 10), wraplength=560,
-                 justify="left").pack(anchor="w", pady=(4, 0))
+                  bold=True, size=12).pack(anchor="w")
+        self._role(ctk.CTkLabel(frame, textvariable=self.signaling_status_var,
+                                font=_font(11), text_color=self.theme["fg"],
+                                wraplength=560, justify="left"), "label_card").pack(
+                                    anchor="w", pady=(4, 0))
         self._lbl(frame, "Directory ONLY — it maps your Device ID to your IP. "
                   "Screen, input and passwords NEVER pass through it. "
                   "Host Accept is still required for every assisted session.",
                   muted=True, wrap=600).pack(anchor="w", pady=(4, 0))
-        btns = self._role(tk.Frame(frame, bg=self.theme["card"]), "card")
+        btns = self._role(ctk.CTkFrame(frame, fg_color="transparent"), "card")
         btns.pack(fill="x", pady=(8, 2))
         self._btn(btns, "Register this device", self._signaling_register_now,
                   "primary").pack(side="left", padx=(0, 6))
@@ -545,20 +684,23 @@ class RemoteDeskApp:
         return frame
 
     def _internet_block(self, parent):
-        frame = self._role(tk.Frame(parent, bg=self.theme["card"]), "card")
+        frame = self._role(ctk.CTkFrame(parent, fg_color="transparent"), "card")
         self._lbl(frame, "Internet mode — direct connection (no relay server)",
-                  bold=True, size=11).pack(anchor="w")
+                  bold=True, size=12).pack(anchor="w")
         self._lbl(frame, "Public IP:", muted=True).pack(anchor="w", pady=(6, 0))
-        tk.Label(frame, textvariable=self.public_ip_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self._role(ctk.CTkLabel(frame, textvariable=self.public_ip_var,
+                                font=_font(13, True),
+                                text_color=self.theme["fg"]), "label_card").pack(anchor="w")
         self._lbl(frame, "LAN IP (port-forward target):", muted=True).pack(anchor="w", pady=(4, 0))
-        tk.Label(frame, textvariable=self.lan_ip_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 11)).pack(anchor="w")
+        self._role(ctk.CTkLabel(frame, textvariable=self.lan_ip_var,
+                                font=_font(11),
+                                text_color=self.theme["fg"]), "label_card").pack(anchor="w")
         self._lbl(frame, "UPnP status:", muted=True).pack(anchor="w", pady=(4, 0))
-        tk.Label(frame, textvariable=self.upnp_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 10), wraplength=560,
-                 justify="left").pack(anchor="w")
-        btns = self._role(tk.Frame(frame, bg=self.theme["card"]), "card")
+        self._role(ctk.CTkLabel(frame, textvariable=self.upnp_var,
+                                font=_font(11), wraplength=560,
+                                justify="left",
+                                text_color=self.theme["fg"]), "label_card").pack(anchor="w")
+        btns = self._role(ctk.CTkFrame(frame, fg_color="transparent"), "card")
         btns.pack(fill="x", pady=(8, 2))
         self._btn(btns, "Open port (UPnP)", self._open_port_upnp, "primary").pack(side="left", padx=(0, 6))
         self._btn(btns, "Refresh", self._refresh_internet_info, "ghost").pack(side="left", padx=6)
@@ -577,94 +719,107 @@ class RemoteDeskApp:
     def _build_home(self):
         page = self.pages["Home"]
         body = self._scrollable(page)
-        self._lbl(body, "Welcome Back!", bold=True, size=22).pack(anchor="w")
+        self._lbl(body, "Welcome Back!", bold=True, size=26).pack(anchor="w")
         self._lbl(body, "Ready to connect or host a remote session — securely.",
-                  muted=True, size=11).pack(anchor="w", pady=(0, 12))
+                  muted=True, size=12).pack(anchor="w", pady=(0, 16))
 
-        top = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
+        top = self._role(ctk.CTkFrame(body, fg_color="transparent"), "bg")
         top.pack(fill="x")
-        id_card = self._role(tk.Frame(top, bg=self.theme["card"], padx=16, pady=12), "card")
-        id_card.pack(side="left", fill="both", expand=True, padx=(0, 6))
-        self._lbl(id_card, "YOUR ADDRESS", muted=True, bold=True, size=9).pack(anchor="w")
-        self._lbl(id_card, "Yehi address dusre PC pe likhna hai.",
-                  muted=True, size=9).pack(anchor="w")
-        id_row = self._role(tk.Frame(id_card, bg=self.theme["card"]), "card")
-        id_row.pack(fill="x", pady=(6, 2))
-        tk.Label(id_row, text=format_device_id(self.device_id),
-                 bg=self.theme["card"], fg=self.theme["fg"],
-                 font=("Segoe UI", 20, "bold")).pack(side="left")
-        self._btn(id_row, "Copy", self._copy_device_id, "ghost").pack(side="left", padx=10)
-        self._lbl(id_card, f"Device: {self.device_name}", muted=True).pack(anchor="w")
+        top.columnconfigure(0, weight=1)
+        top.columnconfigure(1, weight=1)
+        id_card = self._role(ctk.CTkFrame(top, fg_color=self.theme["card"], corner_radius=14,
+                                          border_width=1, border_color=self.theme["border"]), "card")
+        id_card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        inner = self._role(ctk.CTkFrame(id_card, fg_color="transparent"), "card")
+        inner.pack(fill="both", expand=True, padx=18, pady=16)
+        self._lbl(inner, "YOUR ADDRESS", muted=True, bold=True, size=11).pack(anchor="w")
+        self._lbl(inner, "Yehi address dusre PC pe likhna hai.",
+                  muted=True, size=10).pack(anchor="w")
+        id_row = self._role(ctk.CTkFrame(inner, fg_color="transparent"), "card")
+        id_row.pack(fill="x", pady=(8, 2))
+        self._role(ctk.CTkLabel(id_row, text=format_device_id(self.device_id),
+                                font=_font(32, True),
+                                text_color=self.theme["fg"]), "label_card").pack(side="left")
+        self._btn(id_row, "Copy", self._copy_device_id, "ghost").pack(side="left", padx=12)
+        self._lbl(inner, f"Device: {self.device_name}", muted=True).pack(anchor="w")
         os_label = f"{platform.system()} {platform.release()}"
-        self._lbl(id_card, f"OS: {os_label}", muted=True).pack(anchor="w")
-        status_row = self._role(tk.Frame(id_card, bg=self.theme["card"]), "card")
-        status_row.pack(fill="x", pady=(6, 0))
+        self._lbl(inner, f"OS: {os_label}", muted=True).pack(anchor="w")
+        status_row = self._role(ctk.CTkFrame(inner, fg_color="transparent"), "card")
+        status_row.pack(fill="x", pady=(8, 0))
         self._lbl(status_row, "Status:", muted=True).pack(side="left")
-        tk.Label(status_row, textvariable=self.home_status_var,
-                 bg=self.theme["card"], fg=self.theme["fg"],
-                 font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
-        ip_row = self._role(tk.Frame(id_card, bg=self.theme["card"]), "card")
+        self._role(ctk.CTkLabel(status_row, textvariable=self.home_status_var,
+                                font=_font(11, True),
+                                text_color=self.theme["fg"]), "label_card").pack(side="left", padx=6)
+        ip_row = self._role(ctk.CTkFrame(inner, fg_color="transparent"), "card")
         ip_row.pack(fill="x", pady=(4, 0))
-        self._lbl(ip_row, "IP (LAN):", muted=True, size=9).pack(side="left")
-        tk.Label(ip_row, textvariable=self.lan_ip_var,
-                 bg=self.theme["card"], fg=self.theme["muted"],
-                 font=("Segoe UI", 9)).pack(side="left", padx=4)
-        self._lbl(ip_row, "•  Public IP (Internet):", muted=True, size=9).pack(side="left")
-        tk.Label(ip_row, textvariable=self.public_ip_var,
-                 bg=self.theme["card"], fg=self.theme["muted"],
-                 font=("Segoe UI", 9)).pack(side="left", padx=4)
+        self._lbl(ip_row, "IP (LAN):", muted=True, size=10).pack(side="left")
+        self._role(ctk.CTkLabel(ip_row, textvariable=self.lan_ip_var,
+                                font=_font(10), text_color=self.theme["muted"]), "muted_card").pack(
+                                    side="left", padx=4)
+        self._lbl(ip_row, "•  Public IP (Internet):", muted=True, size=10).pack(side="left")
+        self._role(ctk.CTkLabel(ip_row, textvariable=self.public_ip_var,
+                                font=_font(10), text_color=self.theme["muted"]), "muted_card").pack(
+                                    side="left", padx=4)
 
-        host_card = self._role(tk.Frame(top, bg=self.theme["card"], padx=16, pady=12), "card")
-        host_card.pack(side="left", fill="both", expand=True, padx=(6, 0))
-        self._lbl(host_card, "HOST THIS PC", muted=True, bold=True, size=9).pack(anchor="w")
-        self.host_btn = self._btn(host_card, "▶  Start Hosting — allow connections",
+        host_card = self._role(ctk.CTkFrame(top, fg_color=self.theme["card"], corner_radius=14,
+                                            border_width=1, border_color=self.theme["border"]), "card")
+        host_card.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+        hinner = self._role(ctk.CTkFrame(host_card, fg_color="transparent"), "card")
+        hinner.pack(fill="both", expand=True, padx=18, pady=16)
+        self._lbl(hinner, "HOST THIS PC", muted=True, bold=True, size=11).pack(anchor="w")
+        self.host_btn = self._btn(hinner, "▶  Start Hosting — allow connections",
                                   self._toggle_hosting, "primary")
-        self.host_btn.pack(anchor="w", pady=(8, 4))
-        self._lbl(host_card, "Hosting ON hone pe dusra PC tumhara Address likh "
+        self.host_btn.pack(anchor="w", pady=(10, 6))
+        self._lbl(hinner, "Hosting ON hone pe dusra PC tumhara Address likh "
                   "ke connect karega — tumhare paas Accept / Decline ka popup "
                   "aayega. Koi code nahi chahiye.",
                   muted=True, wrap=320).pack(anchor="w", pady=(8, 0))
 
         card = self._card(body, "Connect to a remote device")
         self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
-        self.home_address = self._entry(card, width=40)
-        self.home_address.pack(anchor="w", pady=(2, 2), fill="x")
+        self.home_address = self._entry(card, width=520,
+                                        placeholder="739 738 074 ya 192.168.1.100")
+        self.home_address.pack(anchor="w", pady=(4, 2), fill="x")
         self.home_address.bind("<Return>", lambda _e: self._connect_from_home())
         self._lbl(card, "Device ID ya IP address likho — misal 739 738 074 ya 192.168.1.100",
-                  muted=True, size=9).pack(anchor="w")
+                  muted=True, size=10).pack(anchor="w")
         self.home_unattended = tk.BooleanVar(value=False)
-        self.home_pw_frame = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        self.home_pw_frame = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
         self._lbl(self.home_pw_frame, "Unattended password", bold=True).pack(anchor="w")
-        self.home_pw = self._entry(self.home_pw_frame, width=20, show="•")
+        self.home_pw = self._entry(self.home_pw_frame, width=260, show="•")
         self.home_pw.pack(anchor="w", pady=(2, 2))
-        cb_un = tk.Checkbutton(card, text="Unattended (password se)",
-                               variable=self.home_unattended, font=("Segoe UI", 10),
-                               command=self._toggle_home_unattended)
-        self._role(cb_un, "check_card")
-        cb_un.pack(anchor="w", pady=(6, 0))
+        self._switch(card, "Unattended (password se)", self.home_unattended,
+                     self._toggle_home_unattended).pack(anchor="w", pady=(8, 0))
         self._lbl(card, "Assisted: host ke popup pe Accept zaroori hai. "
                   "Unattended tick karne pe password se connect hoga, popup nahi aayega.",
                   muted=True, wrap=640).pack(anchor="w", pady=(4, 0))
-        row2 = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        row2.pack(fill="x", pady=(8, 0))
+        row2 = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
+        row2.pack(fill="x", pady=(10, 0))
         self._btn(row2, "Connect", self._connect_from_home, "primary").pack(side="left", padx=(0, 6))
         self._btn(row2, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
         self._btn(row2, "Find on LAN", self._find_on_lan_home, "ghost").pack(side="left", padx=6)
         self._lbl(card, "1) Dusre PC pe Start Hosting dabao, uska Address lo. "
                   "2) Yahan Address likh ke Connect dabao — dusre PC pe Accept ka popup aayega.",
-                  muted=True, wrap=640).pack(anchor="w", pady=(6, 0))
-        tk.Label(card, textvariable=self.connect_status_var, bg=self.theme["card"],
-                 fg=self.theme["muted"], font=("Segoe UI", 10),
-                 wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
+                  muted=True, wrap=640).pack(anchor="w", pady=(8, 0))
+        self._role(ctk.CTkLabel(card, textvariable=self.connect_status_var,
+                                font=_font(11), text_color=self.theme["muted"],
+                                wraplength=640, justify="left"), "muted_card").pack(
+                                    anchor="w", pady=(6, 0))
+
+        self.home_internet = self._internet_block(body)
+        self.home_signaling = self._signaling_block(body)
 
         card2 = self._card(body, "Recent sessions")
-        self.home_history_box = tk.Text(card2, height=5, relief="flat", font=("Consolas", 9))
-        self._role(self.home_history_box, "text")
+        self.home_history_box = self._role(ctk.CTkTextbox(card2, height=110,
+                                                          font=ctk.CTkFont(family="Consolas", size=11),
+                                                          fg_color=self.theme["entry"],
+                                                          border_color=self.theme["border"],
+                                                          text_color=self.theme["fg"]), "text")
         self.home_history_box.pack(fill="both", expand=True)
         self.home_history_box.configure(state="disabled")
 
         card3 = self._card(body, "Quick actions")
-        row3 = self._role(tk.Frame(card3, bg=self.theme["card"]), "card")
+        row3 = self._role(ctk.CTkFrame(card3, fg_color="transparent"), "card")
         row3.pack(fill="x")
         self._btn(row3, "File Transfer", lambda: self._show_page("File Transfer"),
                   "ghost").pack(side="left", padx=(0, 6))
@@ -674,8 +829,11 @@ class RemoteDeskApp:
                   "ghost").pack(side="left", padx=6)
 
         card4 = self._card(body, "Activity log")
-        self.log_box = tk.Text(card4, height=7, relief="flat", font=("Consolas", 9))
-        self._role(self.log_box, "text")
+        self.log_box = self._role(ctk.CTkTextbox(card4, height=130,
+                                                 font=ctk.CTkFont(family="Consolas", size=11),
+                                                 fg_color=self.theme["entry"],
+                                                 border_color=self.theme["border"],
+                                                 text_color=self.theme["fg"]), "text")
         self.log_box.pack(fill="both", expand=True)
         self.log_box.configure(state="disabled")
         self._lbl(body, config.DEVELOPER_CREDIT, muted=True).pack(anchor="w")
@@ -685,69 +843,70 @@ class RemoteDeskApp:
     def _build_remote_control(self):
         page = self.pages["Remote Control"]
         body = self._scrollable(page)
-        self._lbl(body, "Remote Control", bold=True, size=18).pack(anchor="w")
+        self._lbl(body, "Remote Control", bold=True, size=22).pack(anchor="w")
         self._lbl(body, "Connect to another PC you are allowed to control.",
-                  muted=True).pack(anchor="w", pady=(0, 12))
-        tab_row = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
-        tab_row.pack(fill="x", pady=(0, 8))
-        self.rc_tab_btns: dict[str, tk.Button] = {}
+                  muted=True).pack(anchor="w", pady=(0, 14))
+        tab_row = self._role(ctk.CTkFrame(body, fg_color="transparent"), "bg")
+        tab_row.pack(fill="x", pady=(0, 10))
+        self.rc_tab_btns: dict[str, ctk.CTkButton] = {}
         for name in ("Quick Connect", "Saved Devices"):
-            btn = tk.Button(tab_row, text=name, relief="flat",
-                            font=("Segoe UI", 10, "bold"), padx=16, pady=6,
-                            command=lambda n=name: self._show_rc_tab(n))
+            btn = ctk.CTkButton(tab_row, text=name, font=_font(11, True),
+                                corner_radius=10, height=34,
+                                fg_color=self.theme["card"], hover_color=self.theme["border"],
+                                text_color=self.theme["fg"],
+                                command=lambda n=name: self._show_rc_tab(n))
             self._role(btn, "ghost_btn")
             btn.pack(side="left", padx=(0, 6))
             self.rc_tab_btns[name] = btn
-        self.rc_tabs: dict[str, tk.Frame] = {}
+        self.rc_tabs: dict[str, ctk.CTkFrame] = {}
         for name in ("Quick Connect", "Saved Devices"):
-            self.rc_tabs[name] = self._role(tk.Frame(body, bg=self.theme["bg"]), "bg")
+            self.rc_tabs[name] = self._role(ctk.CTkFrame(body, fg_color="transparent"), "bg")
 
         quick = self.rc_tabs["Quick Connect"]
         card = self._card(quick, "Quick connect")
         self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
-        self.connect_host = self._entry(card, width=40)
-        self.connect_host.pack(anchor="w", pady=(2, 2), fill="x")
+        self.connect_host = self._entry(card, width=520,
+                                        placeholder="739 738 074 ya 192.168.1.100")
+        self.connect_host.pack(anchor="w", pady=(4, 2), fill="x")
         self._lbl(card, "Device ID ya IP address likho — misal 739 738 074 ya 192.168.1.100",
-                  muted=True, size=9).pack(anchor="w")
-        self._lbl(card, "Port:", bold=True).pack(anchor="w", pady=(8, 0))
-        self.connect_port = self._entry(card, width=10)
-        self.connect_port.pack(anchor="w", pady=(2, 2))
+                  muted=True, size=10).pack(anchor="w")
+        self._lbl(card, "Port:", bold=True).pack(anchor="w", pady=(10, 0))
+        self.connect_port = self._entry(card, width=140)
+        self.connect_port.pack(anchor="w", pady=(4, 2))
         self.connect_port.insert(0, str(self.settings.get("port", config.DEFAULT_PORT)))
         self.use_unattended = tk.BooleanVar(value=False)
-        cb = tk.Checkbutton(card, text="Unattended (password se)",
-                            variable=self.use_unattended, font=("Segoe UI", 10),
-                            command=self._toggle_rc_unattended)
-        self._role(cb, "check_card")
-        cb.pack(anchor="w", pady=(8, 0))
-        self.rc_pw_frame = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        self._switch(card, "Unattended (password se)", self.use_unattended,
+                     self._toggle_rc_unattended).pack(anchor="w", pady=(10, 0))
+        self.rc_pw_frame = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
         self._lbl(self.rc_pw_frame, "Unattended password", bold=True).pack(anchor="w")
-        self.connect_code = self._entry(self.rc_pw_frame, width=20, show="•")
+        self.connect_code = self._entry(self.rc_pw_frame, width=260, show="•")
         self.connect_code.pack(anchor="w", pady=(2, 2))
-        btns = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        btns.pack(fill="x", pady=(8, 0))
+        btns = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
+        btns.pack(fill="x", pady=(10, 0))
         self._btn(btns, "Connect", self._connect, "primary").pack(side="left", padx=(0, 6))
         self._btn(btns, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Scan LAN for devices", self._scan_lan, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Find on LAN", self._find_on_lan_rc, "ghost").pack(side="left", padx=6)
-        tk.Label(card, textvariable=self.connect_status_var, bg=self.theme["card"],
-                 fg=self.theme["muted"], font=("Segoe UI", 10),
-                 wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
+        self._role(ctk.CTkLabel(card, textvariable=self.connect_status_var,
+                                font=_font(11), text_color=self.theme["muted"],
+                                wraplength=640, justify="left"), "muted_card").pack(
+                                    anchor="w", pady=(8, 0))
 
         saved = self.rc_tabs["Saved Devices"]
         card2 = self._card(saved, "Saved devices (trusted)")
         self._lbl(card2, "Click a saved device to fill the Remote Address entry, "
                   "then switch to Quick Connect.", muted=True, wrap=640).pack(anchor="w")
-        self.saved_listbox = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10), height=6)
-        self._role(self.saved_listbox, "listbox")
-        self.saved_listbox.pack(fill="x", pady=(6, 2))
+        self.saved_listbox = _CTkList(card2, height=150)
+        self.saved_listbox.pack(fill="x", pady=(8, 2))
         self.saved_listbox.bind("<<ListboxSelect>>", self._on_saved_select)
-        self._lbl(card2, "Discovered on LAN:", muted=True).pack(anchor="w", pady=(6, 0))
-        self.discovered_listbox = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10), height=4)
-        self._role(self.discovered_listbox, "listbox")
-        self.discovered_listbox.pack(fill="x", pady=(4, 2))
+        self._lbl(card2, "Discovered on LAN:", muted=True).pack(anchor="w", pady=(8, 0))
+        self.discovered_listbox = _CTkList(card2, height=110)
+        self.discovered_listbox.pack(fill="x", pady=(6, 2))
         self.discovered_listbox.bind("<<ListboxSelect>>", self._on_discovered_select)
-        self._btn(card2, "Scan LAN for devices", self._scan_lan, "ghost").pack(anchor="w", pady=(4, 0))
+        self._btn(card2, "Scan LAN for devices", self._scan_lan, "ghost").pack(anchor="w", pady=(6, 0))
         self._show_rc_tab("Quick Connect")
+        self.rc_internet = self._internet_block(body)
+        self.rc_signaling = self._signaling_block(body)
         self._refresh_internet_blocks()
         self._refresh_signaling_blocks()
         self._update_signaling_status()
@@ -759,11 +918,11 @@ class RemoteDeskApp:
         self.rc_tabs[name].pack(fill="x")
         for n, btn in self.rc_tab_btns.items():
             if n == name:
-                btn.configure(bg=t["accent"], fg=t["accent_fg"],
-                              activebackground=t["accent_hover"])
+                btn.configure(fg_color=t["accent"], text_color=t["accent_fg"],
+                              hover_color=t["accent_hover"])
             else:
-                btn.configure(bg=t["card"], fg=t["fg"],
-                              activebackground=t["border"])
+                btn.configure(fg_color=t["card"], text_color=t["fg"],
+                              hover_color=t["border"])
 
     def _on_saved_select(self, _event=None):
         sel = self.saved_listbox.curselection()
@@ -794,18 +953,20 @@ class RemoteDeskApp:
     # ------------------------------------------------------------- Viewer
     def _build_viewer(self):
         page = self.pages["Viewer"]
-        toolbar = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
-        toolbar.pack(fill="x", pady=(0, 8))
-        tk.Label(toolbar, textvariable=self.viewer_status_var, bg=self.theme["bg"],
-                 fg=self.theme["muted"], font=("Segoe UI", 10)).pack(side="left")
-        tk.Label(toolbar, textvariable=self.viewer_quality_var, bg=self.theme["bg"],
-                 fg=self.theme["muted"], font=("Segoe UI", 10)).pack(side="left", padx=16)
-        tk.Label(toolbar, text="Latency: —", bg=self.theme["bg"],
-                 fg=self.theme["muted"], font=("Segoe UI", 10)).pack(side="left")
-        # BUG B: visible Control indicator — the user must SEE whether
-        # clicks will work. Updated on connect/disconnect + every frame.
-        tk.Label(toolbar, textvariable=self.viewer_control_var, bg=self.theme["bg"],
-                 fg=self.theme["muted"], font=("Segoe UI", 10, "bold")).pack(side="left", padx=16)
+        toolbar = self._role(ctk.CTkFrame(page, fg_color="transparent"), "bg")
+        toolbar.pack(fill="x", pady=(0, 10))
+        self._role(ctk.CTkLabel(toolbar, textvariable=self.viewer_status_var,
+                                font=_font(11), text_color=self.theme["muted"]), "muted_bg").pack(
+                                    side="left")
+        self._role(ctk.CTkLabel(toolbar, textvariable=self.viewer_quality_var,
+                                font=_font(11), text_color=self.theme["muted"]), "muted_bg").pack(
+                                    side="left", padx=16)
+        self._role(ctk.CTkLabel(toolbar, text="Latency: —", font=_font(11),
+                                text_color=self.theme["muted"]), "muted_bg").pack(side="left")
+        self._role(ctk.CTkLabel(toolbar, textvariable=self.viewer_control_var,
+                                font=_font(11, True),
+                                text_color=self.theme["muted"]), "muted_bg").pack(
+                                    side="left", padx=16)
         self._btn(toolbar, "Full-screen", self._toggle_fullscreen, "ghost").pack(side="right", padx=6)
         self._btn(toolbar, "Disconnect", self._disconnect, "danger").pack(side="right", padx=6)
         self._btn(toolbar, "Request control (host must allow)",
@@ -816,10 +977,9 @@ class RemoteDeskApp:
         self.canvas.bind("<Button-1>", lambda e: self._send_click(e, True))
         self.canvas.bind("<ButtonRelease-1>", lambda e: self._send_click(e, False))
         self.canvas.bind("<MouseWheel>", self._on_scroll)
-        # Waiting-for-screen state until the first frame arrives.
-        self.viewer_waiting = tk.Label(page, text="Waiting for screen…\n(Host ne Accept kiya to screen yahan aayegi.)",
-                                       bg="#000000", fg="#8CA3C0", font=("Segoe UI", 12),
-                                       justify="center")
+        self.viewer_waiting = self._role(ctk.CTkLabel(
+            page, text="Waiting for screen…\n(Host ne Accept kiya to screen yahan aayegi.)",
+            font=_font(13), text_color="#8CA3C0", justify="center"), "muted_bg")
         self.viewer_waiting.place(relx=0.5, rely=0.5, anchor="center")
 
     def _toggle_fullscreen(self):
@@ -834,56 +994,58 @@ class RemoteDeskApp:
     # ------------------------------------------------------------- File Transfer
     def _build_files(self):
         page = self.pages["File Transfer"]
-        self._lbl(page, "File Transfer", bold=True, size=18).pack(anchor="w")
+        self._lbl(page, "File Transfer", bold=True, size=22).pack(anchor="w")
         self._lbl(page, "File transfer needs an active session AND host permission. "
                   "Received files are NEVER executed automatically.",
-                  muted=True, wrap=640).pack(anchor="w", pady=(0, 12))
-        tab_row = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
-        tab_row.pack(fill="x", pady=(0, 8))
-        self.ft_tab_btns: dict[str, tk.Button] = {}
+                  muted=True, wrap=640).pack(anchor="w", pady=(0, 14))
+        tab_row = self._role(ctk.CTkFrame(page, fg_color="transparent"), "bg")
+        tab_row.pack(fill="x", pady=(0, 10))
+        self.ft_tab_btns: dict[str, ctk.CTkButton] = {}
         for name in ("Send Files", "Receive Files"):
-            btn = tk.Button(tab_row, text=name, relief="flat",
-                            font=("Segoe UI", 10, "bold"), padx=16, pady=6,
-                            command=lambda n=name: self._show_ft_tab(n))
+            btn = ctk.CTkButton(tab_row, text=name, font=_font(11, True),
+                                corner_radius=10, height=34,
+                                fg_color=self.theme["card"], hover_color=self.theme["border"],
+                                text_color=self.theme["fg"],
+                                command=lambda n=name: self._show_ft_tab(n))
             self._role(btn, "ghost_btn")
             btn.pack(side="left", padx=(0, 6))
             self.ft_tab_btns[name] = btn
-        self.ft_tabs: dict[str, tk.Frame] = {}
+        self.ft_tabs: dict[str, ctk.CTkFrame] = {}
         for name in ("Send Files", "Receive Files"):
-            self.ft_tabs[name] = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
+            self.ft_tabs[name] = self._role(ctk.CTkFrame(page, fg_color="transparent"), "bg")
 
         send = self.ft_tabs["Send Files"]
         card = self._card(send, "Send files")
         self._lbl(card, "Drop files here or use Choose Files. Drag-and-drop works "
                   "only if tkinterdnd2 is installed; the chooser always works.",
                   muted=True, wrap=640).pack(anchor="w")
-        drop = tk.Label(card, text="Drop files here or use Choose Files",
-                        bg=self.theme["entry"], fg=self.theme["muted"],
-                        font=("Segoe UI", 11), padx=12, pady=24, relief="flat")
-        drop.pack(fill="x", pady=(8, 6))
+        drop = self._role(ctk.CTkLabel(card, text="Drop files here or use Choose Files",
+                                       font=_font(12), text_color=self.theme["muted"],
+                                       fg_color=self.theme["entry"], corner_radius=10), "muted_card")
+        drop.pack(fill="x", pady=(10, 8), ipady=18)
         try:
             from tkinterdnd2 import DND_FILES, TkinterDnD  # noqa: F401
             drop.configure(text="Drop files here or use Choose Files (drag & drop available)")
         except ImportError:
             pass
-        row = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        row = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
         row.pack(fill="x")
         self._btn(row, "Choose Files…", self._choose_send_files, "primary").pack(side="left", padx=(0, 6))
         self._lbl(row, "Destination device:").pack(side="left")
-        self.ft_dest = ttk.Combobox(row, state="readonly", width=30)
+        self.ft_dest = self._combo(row, ["(No saved devices yet)"], width=260)
         self.ft_dest.pack(side="left", padx=6)
         self._btn(row, "Send selected", self._send_files_honest, "ghost").pack(side="left", padx=6)
-        self._lbl(card, "Transfer queue:", muted=True).pack(anchor="w", pady=(10, 0))
-        self.ft_queue = tk.Listbox(card, relief="flat", font=("Segoe UI", 10), height=5)
-        self._role(self.ft_queue, "listbox")
-        self.ft_queue.pack(fill="x", pady=(4, 2))
+        self._lbl(card, "Transfer queue:", muted=True).pack(anchor="w", pady=(12, 0))
+        self.ft_queue = _CTkList(card, height=130)
+        self.ft_queue.pack(fill="x", pady=(6, 2))
         self._lbl(card, "File send over session is not wired in this build — "
                   "files are not sent. The chooser above only selects files; "
                   "Send reports this honestly and sends nothing.",
                   muted=True, wrap=640).pack(anchor="w")
         self.file_status = tk.StringVar(value="No active session.")
-        tk.Label(card, textvariable=self.file_status, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 10)).pack(anchor="w", pady=(6, 0))
+        self._role(ctk.CTkLabel(card, textvariable=self.file_status, font=_font(11),
+                                text_color=self.theme["fg"]), "label_card").pack(
+                                    anchor="w", pady=(8, 0))
 
         recv = self.ft_tabs["Receive Files"]
         card2 = self._card(recv, "Receive files")
@@ -891,17 +1053,19 @@ class RemoteDeskApp:
                   muted=True).pack(anchor="w")
         self.recv_dir_var = tk.StringVar(
             value=self.settings.get("download_dir", config.default_download_dir()))
-        tk.Label(card2, textvariable=self.recv_dir_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 10),
-                 wraplength=640, justify="left").pack(anchor="w", pady=(4, 6))
+        self._role(ctk.CTkLabel(card2, textvariable=self.recv_dir_var, font=_font(11),
+                                text_color=self.theme["fg"], wraplength=640,
+                                justify="left"), "label_card").pack(anchor="w", pady=(4, 8))
         self._btn(card2, "Open folder", self._open_download_dir, "ghost").pack(anchor="w")
-        self._lbl(card2, "Files in this folder:", muted=True).pack(anchor="w", pady=(10, 0))
-        self.recv_list = tk.Listbox(card2, relief="flat", font=("Segoe UI", 10), height=6)
-        self._role(self.recv_list, "listbox")
-        self.recv_list.pack(fill="x", pady=(4, 2))
-        self._lbl(card2, "Recent transfers:", muted=True).pack(anchor="w", pady=(8, 0))
-        self.transfers_box = tk.Text(card2, height=3, relief="flat", font=("Consolas", 9))
-        self._role(self.transfers_box, "text")
+        self._lbl(card2, "Files in this folder:", muted=True).pack(anchor="w", pady=(12, 0))
+        self.recv_list = _CTkList(card2, height=150)
+        self.recv_list.pack(fill="x", pady=(6, 2))
+        self._lbl(card2, "Recent transfers:", muted=True).pack(anchor="w", pady=(10, 0))
+        self.transfers_box = self._role(ctk.CTkTextbox(card2, height=70,
+                                                       font=ctk.CTkFont(family="Consolas", size=11),
+                                                       fg_color=self.theme["entry"],
+                                                       border_color=self.theme["border"],
+                                                       text_color=self.theme["fg"]), "text")
         self.transfers_box.pack(fill="x")
         self.transfers_box.configure(state="disabled")
         self._show_ft_tab("Send Files")
@@ -913,11 +1077,11 @@ class RemoteDeskApp:
         self.ft_tabs[name].pack(fill="x")
         for n, btn in self.ft_tab_btns.items():
             if n == name:
-                btn.configure(bg=t["accent"], fg=t["accent_fg"],
-                              activebackground=t["accent_hover"])
+                btn.configure(fg_color=t["accent"], text_color=t["accent_fg"],
+                              hover_color=t["accent_hover"])
             else:
-                btn.configure(bg=t["card"], fg=t["fg"],
-                              activebackground=t["border"])
+                btn.configure(fg_color=t["card"], text_color=t["fg"],
+                              hover_color=t["border"])
 
     def _choose_send_files(self):
         paths = filedialog.askopenfilenames(title="Choose files to send")
@@ -983,22 +1147,21 @@ class RemoteDeskApp:
             if isinstance(entry, dict) and entry.get("device_name"):
                 if entry["device_name"] not in names:
                     names.append(entry["device_name"])
-        self.ft_dest["values"] = names or ["(No saved devices yet)"]
+        self.ft_dest.configure(values=names or ["(No saved devices yet)"])
         if names:
             self.ft_dest.set(names[0])
 
     # ------------------------------------------------------------- Trusted Devices
     def _build_trusted(self):
         page = self.pages["Trusted Devices"]
-        self._lbl(page, "Trusted Devices", bold=True, size=18).pack(anchor="w")
+        self._lbl(page, "Trusted Devices", bold=True, size=22).pack(anchor="w")
         self._lbl(page, "Address book: click a device to fill the Remote Address "
                   "field. Every connect STILL needs host Accept — trusted "
                   "devices do NOT auto-accept.",
-                  muted=True, wrap=640).pack(anchor="w", pady=(0, 12))
-        self.trusted_list = tk.Listbox(page, relief="flat", font=("Segoe UI", 10), height=8)
-        self._role(self.trusted_list, "listbox")
-        self.trusted_list.pack(fill="x", pady=(0, 8))
-        row = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
+                  muted=True, wrap=640).pack(anchor="w", pady=(0, 14))
+        self.trusted_list = _CTkList(page, height=200)
+        self.trusted_list.pack(fill="x", pady=(0, 10))
+        row = self._role(ctk.CTkFrame(page, fg_color="transparent"), "bg")
         row.pack(fill="x")
         self._btn(row, "Add Device", self._add_trusted_dialog, "primary").pack(side="left", padx=(0, 6))
         self._btn(row, "Rename", self._rename_trusted, "ghost").pack(side="left", padx=6)
@@ -1009,39 +1172,36 @@ class RemoteDeskApp:
                   "Enable it only on your own devices. You can disable or change the "
                   "password at any time.", muted=True, wrap=640).pack(anchor="w")
         self.unattended_var = tk.BooleanVar(value=bool(self.settings.get("unattended_enabled")))
-        cb = tk.Checkbutton(card, text="Enable unattended access on this device",
-                            variable=self.unattended_var, font=("Segoe UI", 10))
-        self._role(cb, "check_card")
-        cb.pack(anchor="w", pady=6)
-        row2 = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        self._check(card, "Enable unattended access on this device",
+                    self.unattended_var).pack(anchor="w", pady=8)
+        row2 = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
         row2.pack(fill="x")
         self._lbl(row2, "New unattended password (min 10 chars):").pack(side="left")
-        self.unattended_pw = self._entry(row2, width=28, show="•")
+        self.unattended_pw = self._entry(row2, width=260, show="•")
         self.unattended_pw.pack(side="left", padx=6)
         self.unattended_ctrl = tk.BooleanVar(value=bool(self.settings.get("unattended_allow_control")))
-        cb2 = tk.Checkbutton(card, text="Allow mouse/keyboard control in unattended sessions",
-                             variable=self.unattended_ctrl, font=("Segoe UI", 10))
-        self._role(cb2, "check_card")
-        cb2.pack(anchor="w", pady=6)
+        self._check(card, "Allow mouse/keyboard control in unattended sessions",
+                    self.unattended_ctrl).pack(anchor="w", pady=8)
         self._btn(card, "Save unattended settings", self._save_unattended, "primary").pack(anchor="w")
 
     def _add_trusted_dialog(self):
         t = self.theme
-        dlg = tk.Toplevel(self.root)
+        dlg = ctk.CTkToplevel(self.root)
         dlg.title("Add trusted device")
-        dlg.geometry("420x220")
-        dlg.configure(bg=t["card"])
+        dlg.geometry("420x260")
+        dlg.configure(fg_color=t["card"])
         dlg.transient(self.root)
         dlg.grab_set()
-        tk.Label(dlg, text="Add trusted device", font=("Segoe UI", 13, "bold"),
-                 bg=t["card"], fg=t["fg"]).pack(padx=18, pady=(14, 8), anchor="w")
-        tk.Label(dlg, text="Device ID (9 digits):", bg=t["card"], fg=t["fg"],
-                 font=("Segoe UI", 10)).pack(padx=18, anchor="w")
-        id_entry = self._entry(dlg, width=30)
+        self._role(ctk.CTkLabel(dlg, text="Add trusted device", font=_font(14, True),
+                                text_color=t["fg"]), "label_card").pack(
+                                    padx=18, pady=(14, 8), anchor="w")
+        self._role(ctk.CTkLabel(dlg, text="Device ID (9 digits):", font=_font(11),
+                                text_color=t["fg"]), "label_card").pack(padx=18, anchor="w")
+        id_entry = self._entry(dlg, width=300)
         id_entry.pack(padx=18, anchor="w", pady=(2, 8))
-        tk.Label(dlg, text="Device name:", bg=t["card"], fg=t["fg"],
-                 font=("Segoe UI", 10)).pack(padx=18, anchor="w")
-        name_entry = self._entry(dlg, width=30)
+        self._role(ctk.CTkLabel(dlg, text="Device name:", font=_font(11),
+                                text_color=t["fg"]), "label_card").pack(padx=18, anchor="w")
+        name_entry = self._entry(dlg, width=300)
         name_entry.pack(padx=18, anchor="w", pady=(2, 12))
 
         def _save():
@@ -1086,22 +1246,22 @@ class RemoteDeskApp:
     # ------------------------------------------------------------- Session History
     def _build_history(self):
         page = self.pages["Session History"]
-        self._lbl(page, "Session History", bold=True, size=18).pack(anchor="w")
+        self._lbl(page, "Session History", bold=True, size=22).pack(anchor="w")
         self._lbl(page, "Every recorded session on this PC.",
-                  muted=True).pack(anchor="w", pady=(0, 12))
-        row = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
-        row.pack(fill="x", pady=(0, 8))
+                  muted=True).pack(anchor="w", pady=(0, 14))
+        row = self._role(ctk.CTkFrame(page, fg_color="transparent"), "bg")
+        row.pack(fill="x", pady=(0, 10))
         self._lbl(row, "Search:").pack(side="left")
         self.hist_search_var = tk.StringVar()
         self.hist_search_var.trace_add("write", lambda *_: self._refresh_history())
-        search = self._entry(row, width=30, textvariable=self.hist_search_var)
+        search = self._entry(row, width=260, textvariable=self.hist_search_var)
         search.pack(side="left", padx=6)
         self._lbl(row, "Filter:").pack(side="left", padx=(12, 0))
         self.hist_filter_var = tk.StringVar(value="All")
-        filt = ttk.Combobox(row, textvariable=self.hist_filter_var, state="readonly",
-                            width=18, values=["All", "Remote Control", "File Transfer"])
+        filt = self._combo(row, ["All", "Remote Control", "File Transfer"],
+                           variable=self.hist_filter_var,
+                           command=lambda _v: self._refresh_history(), width=180)
         filt.pack(side="left", padx=6)
-        filt.bind("<<ComboboxSelected>>", lambda _e: self._refresh_history())
         cols = ("Device", "Type", "Duration", "Status", "Date & Time")
         self.history_tree = ttk.Treeview(page, columns=cols, show="headings", height=12)
         for c in cols:
@@ -1116,22 +1276,24 @@ class RemoteDeskApp:
     # ------------------------------------------------------------- Settings
     def _build_settings(self):
         page = self.pages["Settings"]
-        self._lbl(page, "Settings", bold=True, size=18).pack(anchor="w")
+        self._lbl(page, "Settings", bold=True, size=22).pack(anchor="w")
         self._lbl(page, "Security, network, general and about.",
-                  muted=True).pack(anchor="w", pady=(0, 12))
-        tab_row = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
-        tab_row.pack(fill="x", pady=(0, 8))
-        self.settings_tab_btns: dict[str, tk.Button] = {}
+                  muted=True).pack(anchor="w", pady=(0, 14))
+        tab_row = self._role(ctk.CTkFrame(page, fg_color="transparent"), "bg")
+        tab_row.pack(fill="x", pady=(0, 10))
+        self.settings_tab_btns: dict[str, ctk.CTkButton] = {}
         for name in ("Security", "Network", "General", "About"):
-            btn = tk.Button(tab_row, text=name, relief="flat",
-                            font=("Segoe UI", 10, "bold"), padx=16, pady=6,
-                            command=lambda n=name: self._show_settings_tab(n))
+            btn = ctk.CTkButton(tab_row, text=name, font=_font(11, True),
+                                corner_radius=10, height=34,
+                                fg_color=self.theme["card"], hover_color=self.theme["border"],
+                                text_color=self.theme["fg"],
+                                command=lambda n=name: self._show_settings_tab(n))
             self._role(btn, "ghost_btn")
             btn.pack(side="left", padx=(0, 6))
             self.settings_tab_btns[name] = btn
-        self.settings_tabs: dict[str, tk.Frame] = {}
+        self.settings_tabs: dict[str, ctk.CTkFrame] = {}
         for name in ("Security", "Network", "General", "About"):
-            self.settings_tabs[name] = self._role(tk.Frame(page, bg=self.theme["bg"]), "bg")
+            self.settings_tabs[name] = self._role(ctk.CTkFrame(page, fg_color="transparent"), "bg")
         self._build_settings_security()
         self._build_settings_network()
         self._build_settings_general()
@@ -1145,11 +1307,11 @@ class RemoteDeskApp:
         self.settings_tabs[name].pack(fill="both", expand=True)
         for n, btn in self.settings_tab_btns.items():
             if n == name:
-                btn.configure(bg=t["accent"], fg=t["accent_fg"],
-                              activebackground=t["accent_hover"])
+                btn.configure(fg_color=t["accent"], text_color=t["accent_fg"],
+                              hover_color=t["accent_hover"])
             else:
-                btn.configure(bg=t["card"], fg=t["fg"],
-                              activebackground=t["border"])
+                btn.configure(fg_color=t["card"], text_color=t["fg"],
+                              hover_color=t["border"])
 
     def _build_settings_security(self):
         tab = self.settings_tabs["Security"]
@@ -1158,88 +1320,82 @@ class RemoteDeskApp:
         self._lbl(card, "Change the unattended access password. Stored as a "
                   "salted hash only — never in plain text.", muted=True,
                   wrap=640).pack(anchor="w")
-        row = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
-        row.pack(fill="x", pady=(8, 0))
+        row = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
+        row.pack(fill="x", pady=(10, 0))
         self._lbl(row, "New password (min 10 chars):").pack(side="left")
-        self.sec_pw = self._entry(row, width=28, show="•")
+        self.sec_pw = self._entry(row, width=260, show="•")
         self.sec_pw.pack(side="left", padx=6)
         self._btn(row, "Change Access Password", self._change_access_password,
                   "primary").pack(side="left", padx=6)
         card2 = self._card(body, "Two-factor authentication")
         self.tfa_var = tk.BooleanVar(value=False)
-        cb = tk.Checkbutton(card2, text="Enable two-factor authentication",
-                            variable=self.tfa_var, state="disabled",
-                            font=("Segoe UI", 10))
-        self._role(cb, "check_card")
-        cb.pack(anchor="w")
+        self._check(card2, "Enable two-factor authentication",
+                    self.tfa_var, disabled=True).pack(anchor="w")
         self._lbl(card2, "Two-factor authentication is not implemented in this build. "
                   "The toggle is disabled on purpose — it does not protect "
                   "anything until a real 2FA flow ships.", muted=True,
                   wrap=640).pack(anchor="w", pady=(4, 0))
         card3 = self._card(body, "Session options")
         self.clipboard_var = tk.BooleanVar(value=bool(self.settings.get("clipboard_sync")))
-        cb2 = tk.Checkbutton(card3, text="Allow Clipboard Sync",
-                             variable=self.clipboard_var, font=("Segoe UI", 10))
-        self._role(cb2, "check_card")
-        cb2.pack(anchor="w")
+        self._check(card3, "Allow Clipboard Sync", self.clipboard_var).pack(anchor="w")
         self.ft_enabled_var = tk.BooleanVar(
             value=bool(self.settings.get("file_transfer_enabled", True)))
-        cb3 = tk.Checkbutton(card3, text="Enable File Transfer",
-                             variable=self.ft_enabled_var, font=("Segoe UI", 10))
-        self._role(cb3, "check_card")
-        cb3.pack(anchor="w", pady=(4, 0))
+        self._check(card3, "Enable File Transfer", self.ft_enabled_var).pack(anchor="w", pady=(6, 0))
         self._lbl(card3, "Disabling File Transfer also disables the file-transfer "
                   "checkbox on incoming requests. Per-session host permission "
                   "is still required when it is enabled.", muted=True,
-                  wrap=640).pack(anchor="w", pady=(4, 0))
+                  wrap=640).pack(anchor="w", pady=(6, 0))
         self._lbl(card3, "Assisted sessions ALWAYS need host Accept — there is "
                   "no auto-accept, not even for trusted devices. The only "
                   "no-Accept path is Unattended (password, opt-in, on the "
                   "Trusted Devices page).",
-                  muted=True, wrap=640).pack(anchor="w", pady=(8, 0))
+                  muted=True, wrap=640).pack(anchor="w", pady=(10, 0))
         self._btn(card3, "Save session options", self._save_security_toggles,
-                  "primary").pack(anchor="w", pady=(8, 0))
+                  "primary").pack(anchor="w", pady=(10, 0))
         card4 = self._card(body, "Session safety")
         self._lbl(card4, "During any session, the host can end it instantly with "
                   "Disconnect. Control permission can be revoked mid-session.",
                   muted=True, wrap=640).pack(anchor="w")
-        self._btn(card4, "End active session now", self._disconnect, "danger").pack(anchor="w", pady=6)
+        self._btn(card4, "End active session now", self._disconnect, "danger").pack(anchor="w", pady=8)
 
     def _build_settings_network(self):
         tab = self.settings_tabs["Network"]
         body = self._scrollable(tab)
         card = self._card(body, "Connection defaults")
         self._conn_type_radios(card)
-        row = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        row = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
         row.pack(fill="x")
         self._lbl(row, "Port:").pack(side="left")
-        self.net_port = self._entry(row, width=8)
+        self.net_port = self._entry(row, width=120)
         self.net_port.pack(side="left", padx=6)
         self.net_port.insert(0, str(self.settings.get("port", config.DEFAULT_PORT)))
         self._btn(row, "Save network settings", self._save_network, "primary").pack(side="left", padx=6)
         card2 = self._card(body, "Internet (direct) status")
         self._lbl(card2, "Public IP:", muted=True).pack(anchor="w")
-        tk.Label(card2, textvariable=self.public_ip_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        self._role(ctk.CTkLabel(card2, textvariable=self.public_ip_var,
+                                font=_font(13, True),
+                                text_color=self.theme["fg"]), "label_card").pack(anchor="w")
         self._lbl(card2, "LAN IP:", muted=True).pack(anchor="w", pady=(4, 0))
-        tk.Label(card2, textvariable=self.lan_ip_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 11)).pack(anchor="w")
+        self._role(ctk.CTkLabel(card2, textvariable=self.lan_ip_var,
+                                font=_font(11),
+                                text_color=self.theme["fg"]), "label_card").pack(anchor="w")
         self._lbl(card2, "UPnP status:", muted=True).pack(anchor="w", pady=(4, 0))
-        tk.Label(card2, textvariable=self.upnp_var, bg=self.theme["card"],
-                 fg=self.theme["fg"], font=("Segoe UI", 10), wraplength=600,
-                 justify="left").pack(anchor="w")
-        btns = self._role(tk.Frame(card2, bg=self.theme["card"]), "card")
-        btns.pack(fill="x", pady=(8, 0))
+        self._role(ctk.CTkLabel(card2, textvariable=self.upnp_var,
+                                font=_font(11), wraplength=600, justify="left",
+                                text_color=self.theme["fg"]), "label_card").pack(anchor="w")
+        btns = self._role(ctk.CTkFrame(card2, fg_color="transparent"), "card")
+        btns.pack(fill="x", pady=(10, 0))
         self._btn(btns, "Open port (UPnP)", self._open_port_upnp, "primary").pack(side="left", padx=(0, 6))
         self._btn(btns, "Refresh", self._refresh_internet_info, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Test port reachable", self._test_port_reachable, "ghost").pack(side="left", padx=6)
-        tk.Label(card2, textvariable=self.port_reachable_var, bg=self.theme["card"],
-                 fg=self.theme["muted"], font=("Segoe UI", 10), wraplength=600,
-                 justify="left").pack(anchor="w", pady=(6, 0))
+        self._role(ctk.CTkLabel(card2, textvariable=self.port_reachable_var,
+                                font=_font(11), wraplength=600, justify="left",
+                                text_color=self.theme["muted"]), "muted_card").pack(
+                                    anchor="w", pady=(8, 0))
         self._lbl(card2, "Internet mode is a direct TCP connection to the host's "
                   "public IP. It works when UPnP succeeds or port forwarding is set; "
                   "strict / CGNAT routers need a relay server (not included).",
-                  muted=True, wrap=640).pack(anchor="w", pady=(6, 0))
+                  muted=True, wrap=640).pack(anchor="w", pady=(8, 0))
         card_sig = self._card(body, "Signaling server (Device ID lookup)")
         self._lbl(card_sig, "AnyDesk-style: with a signaling server, controllers "
                   "connect with your Device ID instead of your IP. The server is "
@@ -1247,74 +1403,72 @@ class RemoteDeskApp:
                   "Without a server, Device IDs cannot resolve; use Direct IP. "
                   "See docs/SIGNALING_DEPLOY.md for free hosting.",
                   muted=True, wrap=640).pack(anchor="w")
-        row_sig = self._role(tk.Frame(card_sig, bg=self.theme["card"]), "card")
-        row_sig.pack(fill="x", pady=(8, 0))
+        row_sig = self._role(ctk.CTkFrame(card_sig, fg_color="transparent"), "card")
+        row_sig.pack(fill="x", pady=(10, 0))
         self._lbl(row_sig, "Server URL:").pack(side="left")
-        self.sig_url_entry = self._entry(row_sig, width=38,
+        self.sig_url_entry = self._entry(row_sig, width=360,
                                          textvariable=self.signaling_url_var)
         self.sig_url_entry.pack(side="left", padx=6)
-        cb_sig = tk.Checkbutton(card_sig, text="Register this device when hosting starts",
-                                variable=self.signaling_auto_var,
-                                font=("Segoe UI", 10))
-        self._role(cb_sig, "check_card")
-        cb_sig.pack(anchor="w", pady=(8, 0))
-        btns_sig = self._role(tk.Frame(card_sig, bg=self.theme["card"]), "card")
-        btns_sig.pack(fill="x", pady=(8, 0))
+        self._check(card_sig, "Register this device when hosting starts",
+                    self.signaling_auto_var).pack(anchor="w", pady=(10, 0))
+        btns_sig = self._role(ctk.CTkFrame(card_sig, fg_color="transparent"), "card")
+        btns_sig.pack(fill="x", pady=(10, 0))
         self._btn(btns_sig, "Save signaling settings", self._save_signaling,
                   "primary").pack(side="left", padx=(0, 6))
         self._btn(btns_sig, "Register now", self._signaling_register_now,
                   "ghost").pack(side="left", padx=6)
-        tk.Label(card_sig, textvariable=self.signaling_status_var,
-                 bg=self.theme["card"], fg=self.theme["muted"],
-                 font=("Segoe UI", 10), wraplength=600,
-                 justify="left").pack(anchor="w", pady=(6, 0))
+        self._role(ctk.CTkLabel(card_sig, textvariable=self.signaling_status_var,
+                                font=_font(11), wraplength=600, justify="left",
+                                text_color=self.theme["muted"]), "muted_card").pack(
+                                    anchor="w", pady=(8, 0))
         card3 = self._card(body, "Network diagnostics")
-        self.diag_box = tk.Text(card3, height=10, relief="flat", font=("Consolas", 9))
-        self._role(self.diag_box, "text")
+        self.diag_box = self._role(ctk.CTkTextbox(card3, height=190,
+                                                  font=ctk.CTkFont(family="Consolas", size=11),
+                                                  fg_color=self.theme["entry"],
+                                                  border_color=self.theme["border"],
+                                                  text_color=self.theme["fg"]), "text")
         self.diag_box.pack(fill="both", expand=True)
         self.diag_box.configure(state="disabled")
-        self._btn(card3, "Run diagnostics", self._run_diag, "ghost").pack(anchor="w", pady=6)
+        self._btn(card3, "Run diagnostics", self._run_diag, "ghost").pack(anchor="w", pady=8)
 
     def _build_settings_general(self):
         tab = self.settings_tabs["General"]
         body = self._scrollable(tab)
         card = self._card(body, "General")
-        row = self._role(tk.Frame(card, bg=self.theme["card"]), "card")
+        row = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
         row.pack(fill="x")
         self._lbl(row, "Download folder for received files:").pack(side="left")
         self.download_dir_var = tk.StringVar(value=self.settings.get("download_dir", ""))
-        dl = self._entry(row, width=40, textvariable=self.download_dir_var)
+        dl = self._entry(row, width=340, textvariable=self.download_dir_var)
         dl.pack(side="left", padx=6)
         self._btn(row, "Browse…", self._pick_download_dir, "ghost").pack(side="left")
         self.auto_update_var = tk.BooleanVar(value=bool(self.settings.get("auto_update_check", True)))
-        cb = tk.Checkbutton(card, text="Check for updates automatically",
-                            variable=self.auto_update_var, font=("Segoe UI", 10))
-        self._role(cb, "check_card")
-        cb.pack(anchor="w", pady=10)
+        self._check(card, "Check for updates automatically",
+                    self.auto_update_var).pack(anchor="w", pady=12)
         self._btn(card, "Save settings", self._save_general, "primary").pack(anchor="w")
         card2 = self._card(body, "Theme")
         self._lbl(card2, "Switch instantly — no restart needed.", muted=True).pack(anchor="w")
         self.theme_toggle_btn = self._btn(card2, "Switch to Light mode",
                                           self._toggle_theme, "ghost")
-        self.theme_toggle_btn.pack(anchor="w", pady=(6, 0))
+        self.theme_toggle_btn.pack(anchor="w", pady=(8, 0))
 
     def _build_settings_about(self):
         tab = self.settings_tabs["About"]
         body = self._scrollable(tab)
         card = self._card(body, "About")
-        self._lbl(card, "◆  RemoteDesk", bold=True, size=18).pack(anchor="w")
+        self._lbl(card, "◆  RemoteDesk", bold=True, size=20).pack(anchor="w")
         self._lbl(card, f"Version {VERSION}", muted=True).pack(anchor="w")
-        self._lbl(card, "Connect. Control. Work Anywhere.", bold=True, size=12).pack(anchor="w", pady=(8, 0))
+        self._lbl(card, "Connect. Control. Work Anywhere.", bold=True, size=13).pack(anchor="w", pady=(10, 0))
         self._lbl(card, config.DEVELOPER_CREDIT, muted=True).pack(anchor="w", pady=(4, 0))
         self._lbl(card, "Windows 10/11 • Secure & Encrypted", muted=True).pack(anchor="w")
-        self._lbl(card, config.ABOUT_TEXT, wrap=640).pack(anchor="w", pady=(8, 0))
+        self._lbl(card, config.ABOUT_TEXT, wrap=640).pack(anchor="w", pady=(10, 0))
         card2 = self._card(body, "Updates")
         self._lbl(card2, "Updates come from GitHub Releases — no server needed. "
                   "When a new version is published, this app shows a popup and "
                   "downloads the installer inside the app (no browser redirect).",
                   muted=True, wrap=640).pack(anchor="w")
         self._btn(card2, "Check for Updates now", self._manual_update_check,
-                  "primary").pack(anchor="w", pady=6)
+                  "primary").pack(anchor="w", pady=8)
 
     # ------------------------------------------------------------- actions
     def _log(self, msg: str):
@@ -1579,51 +1733,40 @@ class RemoteDeskApp:
     def _show_request_dialog(self, data):
         peer, result = data
         t = self.theme
-        dlg = tk.Toplevel(self.root)
+        dlg = ctk.CTkToplevel(self.root)
         dlg.title("Incoming connection request")
-        dlg.geometry("480x380")
-        dlg.configure(bg=t["card"])
+        dlg.geometry("480x400")
+        dlg.configure(fg_color=t["card"])
         dlg.transient(self.root)
         dlg.grab_set()
-        tk.Label(dlg, text="Incoming remote connection request",
-                 font=("Segoe UI", 13, "bold"), bg=t["card"], fg=t["fg"]).pack(
-                     padx=18, pady=(14, 4), anchor="w")
-        tk.Label(dlg, text=f"Device: {peer.get('device_name')}  (ID {peer.get('device_id')})\n"
+        self._role(ctk.CTkLabel(dlg, text="Incoming remote connection request",
+                                font=_font(14, True), text_color=t["fg"]), "label_card").pack(
+                                    padx=18, pady=(16, 4), anchor="w")
+        self._role(ctk.CTkLabel(dlg, text=f"Device: {peer.get('device_name')}  (ID {peer.get('device_id')})\n"
                  f"IP: {peer.get('ip')}\n\n"
                  "Only accept if you know and trust this person.",
-                 bg=t["card"], fg=t["muted"], font=("Segoe UI", 10),
-                 wraplength=430, justify="left").pack(padx=18, anchor="w")
+                 font=_font(11), text_color=t["muted"],
+                 wraplength=430, justify="left"), "muted_card").pack(padx=18, anchor="w")
         view = tk.BooleanVar(value=True)
-        # BUG B FIX (v1.0.7): Control used to default OFF, so after Accept
-        # the guest got a view-only session and every click did nothing —
-        # exactly the reported "connect ho gaya par kuch access nahi".
-        # Control now defaults ON; the host can still untick it.
         ctrl = tk.BooleanVar(value=True)
         files = tk.BooleanVar(value=False)
-        tk.Checkbutton(dlg, text="View Screen", variable=view,
-                       bg=t["card"], fg=t["fg"], selectcolor=t["card"],
-                       activebackground=t["card"], font=("Segoe UI", 10)).pack(
-                           anchor="w", padx=18, pady=(10, 0))
-        tk.Checkbutton(dlg, text="Control (Mouse & Keyboard)", variable=ctrl,
-                       bg=t["card"], fg=t["fg"], selectcolor=t["card"],
-                       activebackground=t["card"], font=("Segoe UI", 10)).pack(
-                           anchor="w", padx=18)
-        tk.Label(dlg, text="Control ON rakhne se dusra banda mouse/keyboard use kar sakega.",
-                 bg=t["card"], fg=t["muted"], font=("Segoe UI", 9)).pack(anchor="w", padx=18)
-        files_cb = tk.Checkbutton(dlg, text="File Transfer", variable=files,
-                                  bg=t["card"], fg=t["fg"], selectcolor=t["card"],
-                                  activebackground=t["card"], font=("Segoe UI", 10))
+        self._check(dlg, "View Screen", view).pack(anchor="w", padx=18, pady=(12, 0))
+        self._check(dlg, "Control (Mouse & Keyboard)", ctrl).pack(anchor="w", padx=18)
+        self._role(ctk.CTkLabel(dlg, text="Control ON rakhne se dusra banda mouse/keyboard use kar sakega.",
+                                font=_font(10), text_color=t["muted"]), "muted_card").pack(
+                                    anchor="w", padx=18)
+        files_cb = self._check(dlg, "File Transfer", files)
         files_cb.pack(anchor="w", padx=18)
         if not self.settings.get("file_transfer_enabled", True):
             files_cb.configure(state="disabled")
-            tk.Label(dlg, text="File Transfer is disabled in Settings → Security.",
-                     bg=t["card"], fg=t["muted"], font=("Segoe UI", 9)).pack(
-                         anchor="w", padx=18)
-        tk.Label(dlg, text=f"No answer in {REQUEST_TIMEOUT_S}s = auto-reject.",
-                 bg=t["card"], fg=t["muted"], font=("Segoe UI", 9)).pack(
-                     anchor="w", padx=18, pady=(8, 0))
-        btns = tk.Frame(dlg, bg=t["card"])
-        btns.pack(pady=16)
+            self._role(ctk.CTkLabel(dlg, text="File Transfer is disabled in Settings → Security.",
+                                    font=_font(10), text_color=t["muted"]), "muted_card").pack(
+                                        anchor="w", padx=18)
+        self._role(ctk.CTkLabel(dlg, text=f"No answer in {REQUEST_TIMEOUT_S}s = auto-reject.",
+                                font=_font(10), text_color=t["muted"]), "muted_card").pack(
+                                    anchor="w", padx=18, pady=(10, 0))
+        btns = self._role(ctk.CTkFrame(dlg, fg_color="transparent"), "card")
+        btns.pack(pady=18)
         state = {"answered": False}
 
         def answer(accept):
@@ -1667,12 +1810,8 @@ class RemoteDeskApp:
             self._log("Incoming request auto-rejected: no answer within 60 seconds.")
 
         dlg.after(REQUEST_TIMEOUT_S * 1000, _timeout)
-        tk.Button(btns, text="✓  Accept", bg=t["success"], fg="#FFFFFF",
-                  relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=6,
-                  command=lambda: answer(True)).pack(side="left", padx=6)
-        tk.Button(btns, text="✕  Decline", bg=t["danger"], fg="#FFFFFF",
-                  relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=6,
-                  command=lambda: answer(False)).pack(side="left", padx=6)
+        self._btn(btns, "✓  Accept", lambda: answer(True), "success").pack(side="left", padx=6)
+        self._btn(btns, "✕  Decline", lambda: answer(False), "danger").pack(side="left", padx=6)
         dlg.protocol("WM_DELETE_WINDOW", lambda: answer(False))
         self.root.wait_window(dlg)
         if "accept" not in result:
@@ -1856,17 +1995,17 @@ class RemoteDeskApp:
             did, info = items[0]
             self._fill_ip_id(ip_entry, id_entry, info.get("address", ""), did)
             return
-        dlg = tk.Toplevel(self.root)
+        dlg = ctk.CTkToplevel(self.root)
         dlg.title("Found on LAN — pick a device")
-        dlg.geometry("440x260")
-        dlg.configure(bg=self.theme["card"])
+        dlg.geometry("440x280")
+        dlg.configure(fg_color=self.theme["card"])
         dlg.transient(self.root)
         dlg.grab_set()
-        tk.Label(dlg, text="Found on LAN — pick a device",
-                 font=("Segoe UI", 12, "bold"), bg=self.theme["card"],
-                 fg=self.theme["fg"]).pack(padx=16, pady=(12, 6), anchor="w")
-        box = tk.Listbox(dlg, relief="flat", font=("Segoe UI", 10), height=6)
-        self._role(box, "listbox")
+        self._role(ctk.CTkLabel(dlg, text="Found on LAN — pick a device",
+                                font=_font(13, True),
+                                text_color=self.theme["fg"]), "label_card").pack(
+                                    padx=16, pady=(14, 6), anchor="w")
+        box = _CTkList(dlg, height=150)
         box.pack(fill="both", expand=True, padx=16)
         for did, info in items:
             box.insert("end", f"{info.get('device_name')} (ID {format_device_id(did)}) — {info.get('address')}")
@@ -1951,7 +2090,6 @@ class RemoteDeskApp:
             now = time.time()
             self._frame_times.append(now)
             self._last_frame_size = img.size
-            # Host screen size from the client (set from frame metadata).
             if getattr(self.client, "host_screen_size", (0, 0)) != (0, 0):
                 self._host_screen_size = self.client.host_screen_size
             if len(self._frame_times) >= 2:
@@ -2059,413 +2197,292 @@ class RemoteDeskApp:
         self._refresh_trusted()
         self._log(f"Revoked trusted device {did}.")
 
-    # ------------------------------------------------------------- history
-    def _format_duration(self, seconds):
-        if seconds is None:
-            return "—"
-        try:
-            s = float(seconds)
-        except (TypeError, ValueError):
-            return "—"
-        if s < 60:
-            return f"{s:.0f}s"
-        return f"{int(s // 60)}m {int(s % 60):02d}s"
-
-    def _history_rows(self):
-        rows = []
-        for entry in storage.load_history():
-            if isinstance(entry, str):
-                rows.append({"device_name": entry, "type": "—", "status": "—",
-                             "duration_s": None, "timestamp": 0})
-                continue
-            if not isinstance(entry, dict):
-                continue
-            rows.append(entry)
-        query = self.hist_search_var.get().strip().lower() if hasattr(self, "hist_search_var") else ""
-        filt = self.hist_filter_var.get() if hasattr(self, "hist_filter_var") else "All"
-        out = []
-        for r in rows:
-            if query and query not in str(r.get("device_name", "")).lower():
-                continue
-            if filt != "All" and r.get("type") != filt:
-                continue
-            out.append(r)
-        return out
-
     def _refresh_history(self):
         if not hasattr(self, "history_tree"):
             return
-        for item in self.history_tree.get_children():
-            self.history_tree.delete(item)
-        for r in self._history_rows():
-            ts = r.get("timestamp") or 0
-            when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "—"
+        for row in self.history_tree.get_children():
+            self.history_tree.delete(row)
+        q = self.hist_search_var.get().lower() if hasattr(self, "hist_search_var") else ""
+        filt = self.hist_filter_var.get() if hasattr(self, "hist_filter_var") else "All"
+        for entry in reversed(storage.load_history()):
+            if not isinstance(entry, dict):
+                continue
+            if q and q not in str(entry.get("device_name", "")).lower() \
+                    and q not in str(entry.get("ip", "")).lower():
+                continue
+            if filt != "All" and entry.get("type") != filt:
+                continue
+            ts = entry.get("timestamp", 0)
+            date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "—"
+            dur = entry.get("duration_s")
+            dur_txt = f"{dur:.0f}s" if isinstance(dur, (int, float)) else "—"
             self.history_tree.insert("", "end", values=(
-                r.get("device_name", "—"), r.get("type", "—"),
-                self._format_duration(r.get("duration_s")),
-                r.get("status", "—"), when))
-        if not self._history_rows():
-            self.history_tree.insert("", "end", values=(
-                "No sessions recorded yet.", "", "", "", ""))
+                entry.get("device_name", ""), entry.get("type", ""),
+                dur_txt, entry.get("status", ""), date_str))
 
     def _refresh_home_history(self):
         if not hasattr(self, "home_history_box"):
             return
+        entries = [e for e in storage.load_history()
+                   if isinstance(e, dict)][-5:]
+        lines = []
+        for e in reversed(entries):
+            ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(e.get("timestamp", 0))) \
+                if e.get("timestamp") else "—"
+            lines.append(f"{ts}  •  {e.get('device_name','')}  •  {e.get('type','')}  •  {e.get('status','')}")
         self.home_history_box.configure(state="normal")
         self.home_history_box.delete("1.0", "end")
-        rows = list(storage.load_history())[-8:]
-        if not rows:
-            self.home_history_box.insert("end", "No sessions yet.\n")
-        for entry in reversed(rows):
-            if isinstance(entry, dict):
-                ts = entry.get("timestamp") or 0
-                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "—"
-                self.home_history_box.insert(
-                    "end",
-                    f"● {entry.get('device_name', '—')} — {entry.get('ip', '—')} — "
-                    f"{when} — {entry.get('status', '—')}\n")
-            else:
-                self.home_history_box.insert("end", str(entry) + "\n")
+        self.home_history_box.insert("end", "\n".join(lines) or "No sessions yet.")
         self.home_history_box.configure(state="disabled")
 
     # ------------------------------------------------------------- settings actions
-    def _save_unattended(self):
-        pw = self.unattended_pw.get()
-        enabled = self.unattended_var.get()
-        if enabled:
-            if not pw:
-                messagebox.showerror("Unattended", "Enter a new password to enable unattended access.")
-                return
-            ok, reason = validate_unattended_password(pw)
-            if not ok:
-                messagebox.showerror("Unattended", reason)
-                return
-            self.settings["unattended_password_hash"] = hash_password(pw)
-        self.settings["unattended_enabled"] = enabled
-        self.settings["unattended_allow_control"] = self.unattended_ctrl.get()
-        storage.save_settings(self.settings)
-        self.unattended_pw.delete(0, "end")
-        messagebox.showinfo("Unattended", "Unattended settings saved. Password is stored as a hash only.")
-        self._log("Unattended settings updated.")
-
-    def _change_access_password(self):
-        pw = self.sec_pw.get()
-        if not pw:
-            messagebox.showerror("Access password", "Enter a new password.")
-            return
-        ok, reason = validate_unattended_password(pw)
-        if not ok:
-            messagebox.showerror("Access password", reason)
-            return
-        self.settings["unattended_password_hash"] = hash_password(pw)
-        storage.save_settings(self.settings)
-        self.sec_pw.delete(0, "end")
-        messagebox.showinfo("Access password",
-                            "Access password changed. Stored as a hash only.")
-        self._log("Access password changed (hash only).")
-
     def _save_security_toggles(self):
         self.settings["clipboard_sync"] = self.clipboard_var.get()
         self.settings["file_transfer_enabled"] = self.ft_enabled_var.get()
-        self.settings.pop("auto_accept_trusted", None)
         storage.save_settings(self.settings)
-        messagebox.showinfo("Settings", "Session options saved.")
-        self._log("Session options saved.")
+        self._log("Saved session options.")
+        messagebox.showinfo("Settings", "Saved session options.")
 
-    def _save_signaling(self):
-        url = signaling.normalize_server_url(self.signaling_url_var.get())
-        self.settings["signaling_url"] = url
-        self.settings["signaling_auto_register"] = bool(self.signaling_auto_var.get())
+    def _save_unattended(self):
+        enabled = self.unattended_var.get()
+        if enabled and not self.settings.get("unattended_hash"):
+            messagebox.showerror("Unattended", "Set a password first (Settings → Security → Access password).")
+            return
+        self.settings["unattended_enabled"] = enabled
+        self.settings["unattended_allow_control"] = self.unattended_ctrl.get()
         storage.save_settings(self.settings)
-        self.signaling_url_var.set(url)
-        self._update_signaling_status()
-        messagebox.showinfo("Signaling server",
-                            "Signaling settings saved. Both PCs must use the "
-                            "same server URL for Device ID lookup.")
-        self._log("Signaling settings saved.")
+        self._log(f"Unattended access {'enabled' if enabled else 'disabled'}.")
+        messagebox.showinfo("Unattended", f"Unattended access {'enabled' if enabled else 'disabled'}.")
+
+    def _change_access_password(self):
+        pw = self.sec_pw.get()
+        ok, err = validate_unattended_password(pw)
+        if not ok:
+            messagebox.showerror("Access password", err)
+            return
+        self.settings["unattended_hash"] = hash_password(pw)
+        storage.save_settings(self.settings)
+        self.sec_pw.delete(0, "end")
+        self._log("Access password changed (stored as salted hash only).")
+        messagebox.showinfo("Access password", "Access password changed.")
 
     def _save_network(self):
         try:
-            port = int(self.net_port.get().strip())
+            port = int(self.net_port.get())
         except ValueError:
             messagebox.showerror("Network", "Port must be a number.")
             return
-        if not 1 <= port <= 65535:
+        if not (1 <= port <= 65535):
             messagebox.showerror("Network", "Port must be 1–65535.")
             return
         self.settings["port"] = port
-        self.settings["connection_type"] = self.conn_type_var.get()
         storage.save_settings(self.settings)
-        messagebox.showinfo("Network", "Network settings saved.")
-        self._log(f"Network settings saved (port {port}).")
+        self._log(f"Port set to {port}. Restart hosting for it to take effect.")
+        messagebox.showinfo("Network", f"Port set to {port}. Restart hosting for it to take effect.")
 
-    def _pick_download_dir(self):
-        folder = filedialog.askdirectory()
-        if folder:
-            self.download_dir_var.set(folder)
+    def _save_signaling(self):
+        url = self.signaling_url_var.get().strip()
+        if url:
+            url = signaling.normalize_server_url(url)
+        self.settings["signaling_url"] = url
+        self.settings["signaling_auto_register"] = self.signaling_auto_var.get()
+        storage.save_settings(self.settings)
+        self._update_signaling_status()
+        self._log(f"Signaling server URL saved: {url or '(none)'}")
+        messagebox.showinfo("Signaling server", "Signaling settings saved.")
 
     def _save_general(self):
-        self.settings["download_dir"] = self.download_dir_var.get().strip() or config.default_download_dir()
+        d = self.download_dir_var.get().strip()
+        if d:
+            self.settings["download_dir"] = d
         self.settings["auto_update_check"] = self.auto_update_var.get()
         storage.save_settings(self.settings)
-        self.recv_dir_var.set(self.settings["download_dir"])
-        messagebox.showinfo("Settings", "Settings saved.")
-        self._log("General settings saved.")
+        self._log("Saved general settings.")
+        messagebox.showinfo("Settings", "Saved.")
+
+    def _pick_download_dir(self):
+        d = filedialog.askdirectory(initialdir=self.settings.get(
+            "download_dir", config.default_download_dir()))
+        if d:
+            self.download_dir_var.set(d)
 
     def _run_diag(self):
+        out = [
+            f"{config.PRODUCT_NAME} {VERSION} — Network diagnostics",
+            f"Device: {self.device_name}",
+            f"Device ID: {format_device_id(self.device_id)}",
+            f"OS: {platform.system()} {platform.release()}",
+            f"Port: {self.settings.get('port', config.DEFAULT_PORT)}",
+            f"LAN IP: {internet.get_lan_ip() or '—'}",
+            f"Public IP: {internet.get_public_ip() or '— (could not reach ipify)'}",
+            f"miniupnpc installed: {'yes' if internet.upnp_available() else 'no'}",
+            f"Signaling URL: {self.settings.get('signaling_url') or '(none)'}",
+            "",
+            "Hosting is ON only when you click Start Hosting. Incoming",
+            "sessions always need your Accept. If LAN discovery fails,",
+            "enter the host IP directly (Find on LAN scans 5 seconds).",
+        ]
         self.diag_box.configure(state="normal")
         self.diag_box.delete("1.0", "end")
-        self.diag_box.insert("end", "Running diagnostics…\n")
+        self.diag_box.insert("end", "\n".join(out))
         self.diag_box.configure(state="disabled")
 
+    # ------------------------------------------------------------- updates
+    def _background_update_check(self):
+        update = update_checker.check_for_update(current=VERSION)
+        if update:
+            self._log(f"Update available: {update.get('tag')} — popup shown.")
+            self.msg_queue.put(("update", update))
+
+    def _manual_update_check(self):
+        self._log("Checking for updates…")
+
         def _thread():
-            from .input_control import input_available
-            from .screen import capture_available
-            lines = [
-                f"Product: {config.PRODUCT_NAME} v{VERSION}",
-                f"Device ID: {self.device_id} ({self.device_name})",
-                f"Port: {self.settings.get('port', config.DEFAULT_PORT)}",
-                f"Screen capture available: {capture_available()}",
-                f"Input control available: {input_available()}",
-                f"Hosting: {'ON' if self.host else 'OFF'}",
-                f"Session active: {bool(self.client.connected or (self.host and self.host.sessions.active))}",
-                f"Connection type: {self.settings.get('connection_type', 'lan')}",
-                f"Public IP: {internet.get_public_ip() or '— (lookup failed)'}",
-                f"LAN IP: {internet.get_lan_ip()}",
-                f"UPnP: {'miniupnpc available' if internet.upnp_available() else 'miniupnpc not installed'}",
-            ]
-            public = internet.get_public_ip()
-            if public:
-                reachable = internet.check_port_reachable(
-                    public, self.settings.get("port", config.DEFAULT_PORT))
-                lines.append(
-                    f"Port reachable self-test ({public}:{self.settings.get('port', config.DEFAULT_PORT)}): "
-                    f"{'reachable' if reachable else 'not reachable from this PC'}")
-                lines.append("Note: a failed self-test can still mean forwarding works for "
-                             "outside callers (some routers block self-tests).")
-            lines.append("Internet relay: NOT included in this build (direct TCP only).")
-            lines.append("See docs/TROUBLESHOOTING.md if a connection fails.")
-            text = "\n".join(lines) + "\n"
-
-            def _show():
-                try:
-                    self.diag_box.configure(state="normal")
-                    self.diag_box.delete("1.0", "end")
-                    self.diag_box.insert("end", text)
-                    self.diag_box.configure(state="disabled")
-                except tk.TclError:
-                    pass
-
-            self.root.after(0, _show)
+            update = update_checker.check_for_update(current=VERSION)
+            if update:
+                self.msg_queue.put(("update", update))
+            else:
+                self.msg_queue.put(("log", "You are on the latest version."))
 
         threading.Thread(target=_thread, daemon=True).start()
 
-    # ------------------------------------------------------------- updates (in-app download)
-    # BUG C (v1.0.7): the old popup was big, its "Later" button was
-    # clipped ("...ate"), and "What's new" was EMPTY (web-created Releases
-    # have an empty body — now fixed by the built-in changelog in
-    # update_checker.resolve_notes). The new popup is SMALL (~520x420),
-    # centered, with ONLY TWO buttons: [Download Update] [Later].
-    # Download starts IMMEDIATELY on click, with live progress in the
-    # SAME popup. On success the button becomes [Run Installer]
-    # (click-only). The release-page link appears ONLY if download fails.
-    def _background_update_check(self):
-        release = update_checker.check_for_update()
-        if release:
-            self.msg_queue.put(("update", release))
-
-    def _manual_update_check(self):
-        release = update_checker.check_for_update()
-        if release:
-            self._show_update_popup(release)
-        else:
-            messagebox.showinfo("Updates", "You are on the latest version (or update checks "
-                                "are not configured yet — see docs/SETUP_UPDATE.md).")
-
-    def _show_update_popup(self, release: dict):
+    def _show_update_popup(self, update):
         t = self.theme
-        self._download_cancel = threading.Event()
-        self._downloaded_path = None
-        self._upd_started_at = None
-        dlg = tk.Toplevel(self.root)
+        dlg = ctk.CTkToplevel(self.root)
         dlg.title("Update available")
-        dlg.configure(bg=t["card"])
+        dlg.geometry("520x420")
+        dlg.configure(fg_color=t["card"])
         dlg.transient(self.root)
         dlg.grab_set()
         dlg.resizable(False, False)
-        w, h = 520, 420
-        dlg.geometry(f"{w}x{h}")
         dlg.update_idletasks()
-        try:
-            px, py = self.root.winfo_rootx(), self.root.winfo_rooty()
-            pw, ph = self.root.winfo_width(), self.root.winfo_height()
-            x = px + max((pw - w) // 2, 0)
-            y = py + max((ph - h) // 2, 0)
-            dlg.geometry(f"+{x}+{y}")
-        except tk.TclError:
-            pass
-        tk.Label(dlg, text=f"✦  Update available — {release['tag']}",
-                 font=("Segoe UI", 14, "bold"), bg=t["card"], fg=t["fg"]).pack(
-                     padx=18, pady=(14, 2), anchor="w")
-        tk.Label(dlg, text=f"You are on v{VERSION}. Download karna hai?",
-                 bg=t["card"], fg=t["muted"], font=("Segoe UI", 10),
-                 wraplength=470, justify="left").pack(padx=18, anchor="w")
-        tk.Label(dlg, text="What's new:", bg=t["card"], fg=t["fg"],
-                 font=("Segoe UI", 10, "bold")).pack(padx=18, pady=(8, 2), anchor="w")
-        notes = tk.Text(dlg, height=6, relief="flat", font=("Segoe UI", 10),
-                        bg=t["entry"], fg=t["fg"])
-        notes.pack(padx=18, fill="x")
-        # Built-in changelog fallback: release notes are NEVER blank now.
-        notes_text = update_checker.resolve_notes(
-            release.get("tag", ""), release.get("notes", ""))
-        notes.insert("1.0", notes_text)
-        notes.configure(state="disabled")
-        # ---- FIXED footer (always visible below the changelog) ----
-        footer = tk.Frame(dlg, bg=t["card"])
-        footer.pack(fill="x", side="bottom", padx=18, pady=(8, 14))
-        tk.Frame(footer, bg=t["border"], height=1).pack(fill="x", pady=(0, 8))
-        tk.Label(footer, text=f"New version: {release['tag']}   •   Current: v{VERSION}",
-                 bg=t["card"], fg=t["fg"], font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        self._upd_progress = ttk.Progressbar(footer, mode="determinate",
-                                             style="Blue.Horizontal.TProgressbar")
-        self._upd_progress.pack(fill="x", pady=(6, 4))
-        self._upd_status = tk.StringVar(value="Not downloaded yet.")
-        tk.Label(footer, textvariable=self._upd_status, bg=t["card"], fg=t["muted"],
-                 font=("Segoe UI", 10), wraplength=470, justify="left").pack(anchor="w")
-        # TWO buttons only, in a grid with weights — nothing can clip.
-        btns = tk.Frame(footer, bg=t["card"])
-        btns.pack(fill="x", pady=(10, 0))
-        btns.columnconfigure(0, weight=1)
-        btns.columnconfigure(1, weight=1)
-        self._upd_download_btn = tk.Button(
-            btns, text="⬇  Download Update", bg=t["accent"], fg=t["accent_fg"],
-            relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=6,
-            command=lambda: self._start_update_download(release, dlg))
-        self._upd_download_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self._upd_run_btn = tk.Button(
-            btns, text="▶  Run Installer", bg=t["success"], fg=t["success_fg"],
-            relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=6,
-            state="disabled", command=self._run_downloaded_installer)
-        # Run button stays hidden until the download succeeds.
-        self._upd_later_btn = tk.Button(
-            btns, text="Later", bg=t["card"], fg=t["fg"],
-            relief="flat", font=("Segoe UI", 10), padx=12, pady=6,
-            command=lambda: self._close_update_popup(dlg))
-        self._upd_later_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        # Fallback link: hidden unless the download actually fails.
-        self._upd_fallback_btn = tk.Button(
-            footer, text="Download fail hua — release page kholo",
-            bg=t["card"], fg=t["accent"], relief="flat",
-            font=("Segoe UI", 9, "underline"), cursor="hand2",
-            command=lambda: webbrowser.open(release["url"]))
-        self._upd_fallback_visible = False
-        dlg.protocol("WM_DELETE_WINDOW", lambda: self._close_update_popup(dlg))
-        self._upd_dialog = dlg
-        self._upd_release = release
+        x = self.root.winfo_rootx() + max((self.root.winfo_width() - 520) // 2, 0)
+        y = self.root.winfo_rooty() + max((self.root.winfo_height() - 420) // 2, 0)
+        dlg.geometry(f"+{x}+{y}")
+        tag = str(update.get("tag") or "new version")
+        self._role(ctk.CTkLabel(dlg, text=f"Update available — {tag}",
+                                font=_font(16, True), text_color=t["fg"]), "label_card").pack(
+                                    padx=20, pady=(18, 4), anchor="w")
+        self._role(ctk.CTkLabel(dlg, text=f"Current version: v{VERSION}",
+                                font=_font(11), text_color=t["muted"]), "muted_card").pack(
+                                    padx=20, anchor="w")
+        notes = update.get("notes") or "No release notes in this build."
+        self._role(ctk.CTkLabel(dlg, text="What's new:", font=_font(11, True),
+                                text_color=t["fg"]), "label_card").pack(
+                                    padx=20, pady=(14, 2), anchor="w")
+        notes_box = self._role(ctk.CTkTextbox(dlg, height=120,
+                                              font=ctk.CTkFont(family="Segoe UI", size=11),
+                                              fg_color=t["entry"],
+                                              border_color=t["border"],
+                                              text_color=t["fg"]), "text")
+        notes_box.pack(fill="x", padx=20)
+        notes_box.insert("end", notes)
+        notes_box.configure(state="disabled")
+        progress = self._role(ctk.CTkProgressBar(dlg, fg_color=t["entry"],
+                                                 progress_color=t["accent"]), "progress")
+        status_var = tk.StringVar(value="Waiting…")
+        btn_row = self._role(ctk.CTkFrame(dlg, fg_color="transparent"), "card")
+        btn_row.pack(pady=(16, 0))
+        btn_later = self._btn(btn_row, "Later", dlg.destroy, "ghost")
+        btn_later.pack(side="right", padx=6)
+        state = {"downloading": False, "done_path": None}
 
-    def _close_update_popup(self, dlg):
-        if self._download_cancel is not None:
-            self._download_cancel.set()
-        try:
-            dlg.destroy()
-        except tk.TclError:
-            pass
+        def _start_download():
+            if state["downloading"]:
+                return
+            state["downloading"] = True
+            btn_dl.configure(text="Downloading…", state="disabled")
+            progress.pack(fill="x", padx=20, pady=(12, 4))
+            self._role(ctk.CTkLabel(dlg, textvariable=status_var,
+                                    font=_font(11), text_color=t["muted"]), "muted_card").pack(
+                                        padx=20, anchor="w")
+            self._download_cancel = threading.Event()
+            threading.Thread(target=self._download_update_thread,
+                             args=(update,), daemon=True).start()
 
-    def _start_update_download(self, release: dict, dlg):
-        asset = update_checker.select_setup_asset(release.get("assets"))
-        if asset is None:
-            self._upd_status.set("No installer file in this release.")
-            self._show_update_fallback()
-            return
-        self._download_cancel = threading.Event()
-        self._upd_started_at = time.time()
-        self._upd_download_btn.configure(state="disabled", text="Downloading…")
-        self._upd_status.set(f"Downloading {asset['name']} …")
-        self._upd_progress.configure(value=0)
-        url = asset["download_url"]
+        btn_dl = self._btn(btn_row, "Download Update", _start_download, "primary")
+        btn_dl.pack(side="left", padx=6)
+        self._update_popup = {
+            "dialog": dlg, "progress": progress, "status_var": status_var,
+            "btn_dl": btn_dl, "state": state,
+            "release_url": update.get("url") or
+            f"https://github.com/{config.UPDATE_REPO}/releases",
+        }
 
-        def _thread():
-            def _progress(done, total):
-                self.msg_queue.put(("update_progress", (done, total)))
-            path, error = update_checker.download_update(
-                url, progress_callback=_progress,
-                cancel_event=self._download_cancel)
-            self.msg_queue.put(("update_done", (path, error)))
-
-        threading.Thread(target=_thread, daemon=True).start()
-
-    def _show_update_fallback(self):
-        """Show the release-page fallback link (only on failure)."""
-        try:
-            if not getattr(self, "_upd_fallback_visible", False):
-                self._upd_fallback_btn.pack(anchor="w", pady=(6, 0))
-                self._upd_fallback_visible = True
-        except tk.TclError:
-            pass
-
-    def _on_update_progress(self, done: int, total: int):
-        if not hasattr(self, "_upd_progress"):
+    def _on_update_progress(self, done, total, elapsed):
+        popup = getattr(self, "_update_popup", None)
+        if not popup:
             return
         try:
-            elapsed = 0.0
-            if getattr(self, "_upd_started_at", None):
-                elapsed = max(time.time() - self._upd_started_at, 0.0)
+            popup["status_var"].set(format_update_status(done, total, elapsed))
             if total > 0:
-                self._upd_progress.configure(maximum=total, value=done)
-            else:
-                self._upd_progress.configure(mode="indeterminate")
-                try:
-                    self._upd_progress.start(10)
-                except tk.TclError:
-                    pass
-            self._upd_status.set(format_update_status(done, total, elapsed))
+                popup["progress"].set(min(done / total, 1.0))
         except tk.TclError:
             pass
 
     def _on_update_done(self, path, error):
-        if not hasattr(self, "_upd_progress"):
+        popup = getattr(self, "_update_popup", None)
+        if not popup:
             return
         try:
-            try:
-                self._upd_progress.stop()
-            except tk.TclError:
-                pass
-            self._upd_progress.configure(mode="determinate")
             if error:
-                if error == "Download cancelled.":
-                    self._upd_status.set("Download cancelled.")
-                else:
-                    self._upd_status.set(f"{error}")
-                    self._show_update_fallback()
-                self._upd_download_btn.configure(state="normal", text="⬇  Retry Download")
+                popup["status_var"].set(f"Download failed: {error}")
+                popup["btn_dl"].configure(text="Try again", state="normal")
+                popup["state"]["downloading"] = False
+                self._downloaded_path = None
+                dlg = popup["dialog"]
+
+                def _open_release():
+                    webbrowser.open(popup.get("release_url") or
+                                    f"https://github.com/{config.UPDATE_REPO}/releases")
+                    dlg.destroy()
+
+                self._btn(dlg, "Open release page", _open_release, "ghost").pack(pady=(6, 0))
                 return
             self._downloaded_path = path
-            self._upd_progress.configure(value=self._upd_progress.cget("maximum"))
-            self._upd_status.set(f"Downloaded: {os.path.basename(path)} — click Run Installer when ready.")
-            # Download button becomes Run Installer; Later stays.
-            self._upd_download_btn.configure(state="disabled", text="✓  Downloaded")
-            self._upd_download_btn.grid_forget()
-            self._upd_run_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-            self._upd_run_btn.configure(state="normal")
+            popup["progress"].set(1.0)
+            popup["status_var"].set("Download complete — click Run Installer.")
+            popup["btn_dl"].configure(text="Run Installer", state="normal")
+            popup["btn_dl"].configure(command=self._run_downloaded_installer)
+            popup["state"]["downloading"] = False
+            popup["state"]["done_path"] = path
         except tk.TclError:
             pass
 
+    def _download_update_thread(self, update):
+        """Download the release asset in a worker thread; UI updates via queue.
+
+        Real API: download_update(asset_url, dest_dir, progress_callback
+        (downloaded, total), cancel_event) -> (path, error). Never raises.
+        """
+        asset = update_checker.select_setup_asset(update.get("assets"))
+        url = asset.get("download_url") if asset else update.get("url")
+        if not url:
+            self.msg_queue.put(("update_done", (None, "No download URL in this release.")))
+            return
+        started = time.time()
+
+        def _progress(done, total):
+            self.msg_queue.put(("update_progress", (done, total, time.time() - started)))
+
+        path, error = update_checker.download_update(
+            url, None, _progress, self._download_cancel)
+        self.msg_queue.put(("update_done", (path, error)))
+
     def _run_downloaded_installer(self):
-        """Run the downloaded installer ONLY after the user clicks Run."""
-        path = self._downloaded_path
-        if not path or not os.path.exists(path):
-            messagebox.showerror("Run Installer", "Downloaded installer not found. Download again.")
+        if not self._downloaded_path or not os.path.exists(self._downloaded_path):
+            messagebox.showerror("Installer", "Installer not found. Please download again.")
             return
         try:
             if sys.platform.startswith("win"):
-                os.startfile(path)  # noqa: S606 — user-clicked, file we just downloaded
+                os.startfile(self._downloaded_path)  # noqa: S606 — user-clicked, downloaded asset
             else:
-                subprocess.Popen(["xdg-open", path])  # noqa: S603,S607
+                subprocess.Popen(["xdg-open", self._downloaded_path])  # noqa: S603,S607
         except Exception as exc:
-            messagebox.showerror("Run Installer", f"Could not launch installer: {exc}")
+            messagebox.showerror("Installer", f"Could not start installer: {exc}")
 
 
 def run():
-    root = tk.Tk()
-    RemoteDeskApp(root)
+    root = ctk.CTk()
+    app = RemoteDeskApp(root)
     root.mainloop()

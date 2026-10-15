@@ -43,6 +43,8 @@ CHANGELOG = {
                "• FIXED: Control defaults ON in the Accept popup, so clicks\n  work after Accept instead of view-only.\n"
                "• Smaller update popup (Download / Later only), with a\n  built-in changelog so “What’s new” is never empty.\n"
                "• Fresh Option 1 (AnyDesk Blue) UI rebuild.",
+    "v1.0.8": "• NEW LOOK: UI rebuilt on CustomTkinter — rounded cards,\n  rounded buttons/entries, real card contrast + depth. Same flows,\n  same security: Address → Accept → control.\n"
+               "• Same flows as v1.0.7: no pairing code, host Accept always,\n  unattended (password, opt-in) is the only no-Accept path.",
 }
 
 GENERIC_CHANGELOG = "Is version me stability + bug fixes."
