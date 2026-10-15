@@ -26,7 +26,7 @@ jobs:
         run: python -m pytest -q
       - name: Build EXE (PyInstaller)
         run: pyinstaller remote_desk.spec
-      - name: Smoke-test built EXE (v1.0.12)
+      - name: Smoke-test built EXE (v1.0.13)
         # "Upar test karo": the portable EXE must at least START on a
         # real Windows runner BEFORE any asset ships. --version exits
         # before any GUI/Tk code runs, so this proves the one-file
@@ -54,22 +54,29 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Build installer
         run: iscc setup.iss
-      - name: Smoke-test installed EXE (v1.0.12)
+      - name: Smoke-test installed EXE (v1.0.13)
         # Same guarantee for the installer path: silent-install into
         # a temp dir on the runner, then the INSTALLED EXE must also
         # start (--version, exit 0). Catches installer-packaging
         # regressions (missing files, broken install dir) before
         # the release ever publishes.
+        # v1.0.13: the v1.0.12 run failed HERE on a script bug, not
+        # the product — the old step invoked the installer with
+        # `& $installer.FullName ...` and checked $LASTEXITCODE,
+        # which came back blank/null in this runner context, so the
+        # check threw and the installed-EXE check never ran. This
+        # step now uses the SAME reliable Start-Process -Wait
+        # -PassThru + ExitCode pattern as the passing built-EXE
+        # step for BOTH the installer and the installed EXE.
         run: |
           $installer = Get-ChildItem release\Setup-RemoteDesk-*.exe | Select-Object -First 1
-          if (-not $installer) { throw "SMOKE FAIL: no installer found in release" }
+          if (-not $installer) { throw "SMOKE FAIL: installer not found in release/ — build produced no installer" }
           $dir = "$env:RUNNER_TEMP\RemoteDesk-smoke"
-          & $installer.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="$dir"
-          if ($LASTEXITCODE -ne 0) { throw "SMOKE FAIL: silent installer exited $LASTEXITCODE" }
+          $inst = Start-Process -FilePath $installer.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$dir" -PassThru -NoNewWindow -Wait
+          if ($inst.ExitCode -ne 0) { throw "SMOKE FAIL: silent installer exited $($inst.ExitCode)" }
           $installed = Join-Path $dir "RemoteDesk.exe"
           if (-not (Test-Path $installed)) { throw "SMOKE FAIL: installed EXE missing at $installed" }
-          $p = Start-Process -FilePath $installed -ArgumentList "--version" -PassThru -NoNewWindow
-          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "SMOKE FAIL: installed RemoteDesk.exe --version timed out (60s)" }
+          $p = Start-Process -FilePath $installed -ArgumentList "--version" -PassThru -NoNewWindow -Wait
           if ($p.ExitCode -ne 0) { throw "SMOKE FAIL: installed RemoteDesk.exe --version exited $($p.ExitCode)" }
           Write-Host "Smoke OK: installed RemoteDesk.exe --version exited 0"
       - name: Upload EXE artifact
