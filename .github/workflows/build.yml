@@ -26,6 +26,22 @@ jobs:
         run: python -m pytest -q
       - name: Build EXE (PyInstaller)
         run: pyinstaller remote_desk.spec
+      - name: Smoke-test built EXE (v1.0.10)
+        # "Upar test karo": the portable EXE must at least START on a
+        # real Windows runner BEFORE any asset ships. --version exits
+        # before any GUI/Tk code runs, so this proves the one-file
+        # bundle extracts and the Python DLL (python311.dll) loads.
+        # Start-Process + WaitForExit(60s): if the bootloader ever
+        # fails with a "Failed to load Python DLL" message box, the
+        # step times out and FAILS the build instead of hanging.
+        # A windowed (console=False) EXE has no stdout, so the check
+        # is exit-code based; run.py --version prints the version
+        # when run from source.
+        run: |
+          $p = Start-Process -FilePath "dist\RemoteDesk.exe" -ArgumentList "--version" -PassThru -NoNewWindow
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "SMOKE FAIL: dist RemoteDesk.exe --version timed out (60s) - bundle likely failed to extract/load" }
+          if ($p.ExitCode -ne 0) { throw "SMOKE FAIL: dist RemoteDesk.exe --version exited $($p.ExitCode) - bundle did not start" }
+          Write-Host "Smoke OK: dist RemoteDesk.exe --version exited 0"
       - name: Verify EXE icon (v1.0.7)
         # The desktop icon pointed at {app}\RemoteDesk.exe, so a silently
         # missing embedded icon meant a generic default desktop icon.
@@ -38,6 +54,24 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Build installer
         run: iscc setup.iss
+      - name: Smoke-test installed EXE (v1.0.10)
+        # Same guarantee for the installer path: silent-install into
+        # a temp dir on the runner, then the INSTALLED EXE must also
+        # start (--version, exit 0). Catches installer-packaging
+        # regressions (missing files, broken install dir) before
+        # the release ever publishes.
+        run: |
+          $installer = Get-ChildItem release\Setup-RemoteDesk-*.exe | Select-Object -First 1
+          if (-not $installer) { throw "SMOKE FAIL: no installer found in release" }
+          $dir = "$env:RUNNER_TEMP\RemoteDesk-smoke"
+          & $installer.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="$dir"
+          if ($LASTEXITCODE -ne 0) { throw "SMOKE FAIL: silent installer exited $LASTEXITCODE" }
+          $installed = Join-Path $dir "RemoteDesk.exe"
+          if (-not (Test-Path $installed)) { throw "SMOKE FAIL: installed EXE missing at $installed" }
+          $p = Start-Process -FilePath $installed -ArgumentList "--version" -PassThru -NoNewWindow
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "SMOKE FAIL: installed RemoteDesk.exe --version timed out (60s)" }
+          if ($p.ExitCode -ne 0) { throw "SMOKE FAIL: installed RemoteDesk.exe --version exited $($p.ExitCode)" }
+          Write-Host "Smoke OK: installed RemoteDesk.exe --version exited 0"
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
