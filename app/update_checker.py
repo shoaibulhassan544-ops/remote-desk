@@ -18,6 +18,7 @@ share-the-installer link. See docs/SETUP_UPDATE.md.
 import json
 import os
 import re
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -45,17 +46,79 @@ CHANGELOG = {
                "• Fresh Option 1 (AnyDesk Blue) UI rebuild.",
     "v1.0.8": "• NEW LOOK: UI rebuilt on CustomTkinter — rounded cards,\n  rounded buttons/entries, real card contrast + depth. Same flows,\n  same security: Address → Accept → control.\n"
                "• Same flows as v1.0.7: no pairing code, host Accept always,\n  unattended (password, opt-in) is the only no-Accept path.",
+    "v1.0.9": "• AUTO-INSTALL: after the update downloads, the app closes\n  itself and the installer starts on its own — no manual\n  installer button to press, no more locked-file install errors.\n"
+               "• FIXED: “What’s new” no longer shows a GitHub compare link\n  — only the real changelog is shown.\n"
+               "• NEW: installer now shows a license agreement (EULA).\n"
+               "• Upgrade no longer needs an uninstall first — same install\n  folder every version, app exits before the installer runs.",
 }
 
 GENERIC_CHANGELOG = "Is version me stability + bug fixes."
 
 
+def sanitize_notes(notes: str | None) -> str:
+    """Strip GitHub compare-link junk from release notes. Pure function.
+
+    GitHub auto-appends a "**Full Changelog**: <compare URL>" line to
+    release notes, and the v1.0.8 popup showed that bare GitHub URL in
+    "What's new" (user screenshot). Sanitize:
+    - drop any line containing "Full Changelog", "/compare/", or
+      "github.com" (the compare line and any other GitHub URL line);
+    - strip remaining markdown link syntax "[text](url)" → "text"
+      (keep the readable text, drop the URL);
+    - remove any leftover bare github.com URL token;
+    - collapse 3+ consecutive blank lines to one blank line.
+    Returns "" when nothing readable remains (caller falls back).
+    """
+    raw = notes or ""
+    kept = []
+    for line in raw.splitlines():
+        low = line.lower()
+        if "full changelog" in low or "/compare/" in low or "github.com" in low:
+            continue
+        # "[text](url)" -> "text" (keep text, drop URL).
+        line = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", line)
+        # Any leftover bare github.com URL token -> drop the token.
+        line = re.sub(r"https?://github\.com/\S*", "", line)
+        kept.append(line.rstrip())
+    text = "\n".join(kept)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def launch_installer_detached(path: str, platform: str | None = None,
+                              popen=None):
+    """Launch an installer DETACHED so it survives the app exiting.
+
+    The update flow must close the app BEFORE the installer replaces
+    files (otherwise Windows locks RemoteDesk.exe and the upgrade
+    fails). A detached child keeps running after our process exits.
+
+    - Windows: Popen(..., creationflags=DETACHED_PROCESS |
+      CREATE_NEW_PROCESS_GROUP) — the installer is fully independent.
+    - POSIX: Popen(..., start_new_session=True).
+    `popen` is injectable for tests (no real process is launched).
+    Returns the Popen object (or the mock's return value).
+    """
+    import subprocess
+
+    plat = platform if platform is not None else sys.platform
+    launcher = popen or subprocess.Popen
+    if plat.startswith("win"):
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        return launcher([path], creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                        close_fds=True)
+    return launcher([path], start_new_session=True)
+
+
 def resolve_notes(tag: str, notes: str | None) -> str:
     """Release notes with fallback: API body → built-in entry → generic.
 
+    The API body is sanitized first (GitHub compare-link junk removed);
+    if nothing readable remains, fall back to the built-in entry.
     Never returns blank. Pure function, fully testable.
     """
-    body = (notes or "").strip()
+    body = sanitize_notes(notes)
     if body:
         return body
     entry = CHANGELOG.get((tag or "").strip())

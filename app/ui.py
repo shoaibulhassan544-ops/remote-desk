@@ -31,9 +31,14 @@ Honesty rules (unchanged, enforced):
   defaults ON since v1.0.7). Unattended (password, opt-in) is the only
   no-Accept path.
 - Update popup: SMALL, centered, only [Download Update] [Later].
-  Download starts immediately in-thread with live progress; on success
-  the button becomes [Run Installer] (click-only). The release-page
-  link appears ONLY if the download fails.
+  Download starts immediately in-thread with live progress; on
+  success the button becomes [Install Now] and a 3-second countdown
+  starts — at 0 (or on Install Now) the installer is launched
+  DETACHED and the app closes itself, so no file is locked and the
+  upgrade installs in place without an uninstall first. [Later]
+  cancels the auto-install. The release-page link appears ONLY if
+  the download fails. The installer is NEVER launched while the
+  app is still running.
 """
 
 import io
@@ -2383,9 +2388,12 @@ class RemoteDeskApp:
         status_var = tk.StringVar(value="Waiting…")
         btn_row = self._role(ctk.CTkFrame(dlg, fg_color="transparent"), "card")
         btn_row.pack(pady=(16, 0))
-        btn_later = self._btn(btn_row, "Later", dlg.destroy, "ghost")
+        state = {"downloading": False, "done_path": None,
+                 "auto_install_cancelled": False, "countdown": 0}
+        # Later cancels a pending auto-install (if any) and closes.
+        btn_later = self._btn(btn_row, "Later",
+                              lambda: self._cancel_auto_install(), "ghost")
         btn_later.pack(side="right", padx=6)
-        state = {"downloading": False, "done_path": None}
 
         def _start_download():
             if state["downloading"]:
@@ -2404,7 +2412,7 @@ class RemoteDeskApp:
         btn_dl.pack(side="left", padx=6)
         self._update_popup = {
             "dialog": dlg, "progress": progress, "status_var": status_var,
-            "btn_dl": btn_dl, "state": state,
+            "btn_dl": btn_dl, "btn_later": btn_later, "state": state,
             "release_url": update.get("url") or
             f"https://github.com/{config.UPDATE_REPO}/releases",
         }
@@ -2441,11 +2449,15 @@ class RemoteDeskApp:
                 return
             self._downloaded_path = path
             popup["progress"].set(1.0)
-            popup["status_var"].set("Download complete — click Run Installer.")
-            popup["btn_dl"].configure(text="Run Installer", state="normal")
-            popup["btn_dl"].configure(command=self._run_downloaded_installer)
             popup["state"]["downloading"] = False
             popup["state"]["done_path"] = path
+            popup["state"]["auto_install_cancelled"] = False
+            popup["state"]["countdown"] = 3
+            popup["btn_dl"].configure(text="Install Now", state="normal")
+            popup["btn_dl"].configure(command=self._install_now)
+            popup["status_var"].set(
+                "Download complete — installer starts in 3 seconds…")
+            self._schedule_auto_install_tick()
         except tk.TclError:
             pass
 
@@ -2469,17 +2481,99 @@ class RemoteDeskApp:
             url, None, _progress, self._download_cancel)
         self.msg_queue.put(("update_done", (path, error)))
 
-    def _run_downloaded_installer(self):
-        if not self._downloaded_path or not os.path.exists(self._downloaded_path):
+    # ------------------------------------------------- auto-install (v1.0.9)
+    def _schedule_auto_install_tick(self):
+        """Schedule the next 1-second auto-install countdown tick."""
+        popup = getattr(self, "_update_popup", None)
+        if not popup:
+            return
+        try:
+            dlg = popup["dialog"]
+            if not dlg.winfo_exists():
+                return
+            dlg.after(1000, self._tick_auto_install)
+        except tk.TclError:
+            pass
+
+    def _tick_auto_install(self):
+        """One auto-install countdown tick. Testable with fakes (no Tk).
+
+        Decrements the countdown, updates the status line, and at 0
+        launches the installer detached and closes the app. Stops
+        silently if the popup was closed or Later was clicked.
+        """
+        popup = getattr(self, "_update_popup", None)
+        if not popup:
+            return
+        state = popup["state"]
+        if state.get("auto_install_cancelled"):
+            return
+        try:
+            dlg = popup["dialog"]
+            if not dlg.winfo_exists():
+                return
+        except (tk.TclError, AttributeError):
+            return
+        state["countdown"] = int(state.get("countdown", 0)) - 1
+        if state["countdown"] <= 0:
+            self._launch_installer_and_exit()
+            return
+        try:
+            popup["status_var"].set(
+                f"Download complete — installer starts in "
+                f"{state['countdown']} seconds…")
+        except (tk.TclError, AttributeError):
+            pass
+        self._schedule_auto_install_tick()
+
+    def _install_now(self):
+        """User clicked [Install Now]: skip the rest of the countdown."""
+        popup = getattr(self, "_update_popup", None)
+        if popup:
+            popup["state"]["countdown"] = 0
+        self._launch_installer_and_exit()
+
+    def _cancel_auto_install(self):
+        """User clicked [Later]: cancel any pending auto-install."""
+        popup = getattr(self, "_update_popup", None)
+        if popup:
+            popup["state"]["auto_install_cancelled"] = True
+            popup["state"]["countdown"] = 0
+        dlg = popup["dialog"] if popup else None
+        try:
+            if dlg is not None and dlg.winfo_exists():
+                dlg.destroy()
+        except tk.TclError:
+            pass
+
+    def _launch_installer_and_exit(self):
+        """Launch the downloaded installer DETACHED, then close the app.
+
+        Order matters: the installer MUST be launched detached first
+        (it survives our exit), and the app MUST exit BEFORE the
+        installer replaces files — otherwise Windows locks
+        RemoteDesk.exe and the upgrade fails with "Access is denied".
+        The installer is NEVER launched while the app is still running:
+        we exit immediately after the detached launch.
+        """
+        path = self._downloaded_path
+        if not path or not os.path.exists(path):
             messagebox.showerror("Installer", "Installer not found. Please download again.")
             return
         try:
-            if sys.platform.startswith("win"):
-                os.startfile(self._downloaded_path)  # noqa: S606 — user-clicked, downloaded asset
-            else:
-                subprocess.Popen(["xdg-open", self._downloaded_path])  # noqa: S603,S607
+            update_checker.launch_installer_detached(path)
         except Exception as exc:
             messagebox.showerror("Installer", f"Could not start installer: {exc}")
+            return
+        self._exit_for_install()
+
+    def _exit_for_install(self):
+        """Close the app so the installer can replace its files."""
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
 
 
 def run():
