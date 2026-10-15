@@ -1,4 +1,26 @@
-# TEST REPORT — RemoteDesk v1.0.12 (honest status)
+# TEST REPORT — RemoteDesk v1.0.13 (honest status)
+
+## v1.0.13 addendum (this session) — installer smoke-step script bug fix; v1.0.12 never shipped
+
+**URGENT: v1.0.12 NEVER SHIPPED.** Its Actions build got FURTHER than
+v1.0.11: "Run tests" GREEN (168 passed) and "Smoke-test built EXE"
+GREEN (built EXE printed 1.0.12, exit 0 — the DLL issue is fixed).
+Then "Smoke-test installed EXE" FAILED with `SMOKE FAIL: silent
+installer exited ` (blank exit code). The installed-EXE check never ran.
+
+ROOT CAUSE: a smoke-TEST SCRIPT bug, NOT a product bug. The old step
+invoked the installer with `& $installer.FullName ...` and checked
+`$LASTEXITCODE`, which came back blank/null in this runner context,
+so the check threw. FIX (`build.yml` only): the installer smoke step
+now uses the SAME reliable pattern as the passing built-EXE step —
+`Start-Process -FilePath $installer.FullName -ArgumentList ... -PassThru
+-NoNewWindow -Wait` + `$inst.ExitCode` — for BOTH the installer and
+the installed EXE `--version` check. Plus a clear "installer not found
+in release/" guard instead of a blank exit code. The step still fails
+the build on any real failure (not warn-only).
+- Version bumped to 1.0.13 everywhere (`app/version.py`, `setup.iss`,
+  CHANGELOG entry, README, test version assertions).
+- `python3 -m pytest -q` must be green before shipping. Ship only v1.0.13+.
 
 ## v1.0.12 addendum (this session) — flaky signaling test fix; v1.0.11 never shipped
 
