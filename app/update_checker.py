@@ -60,6 +60,8 @@ CHANGELOG = {
                "• FIXED: IP-connect errors now say the REAL reason\n  (refused / timeout / TLS) + what to fix — no bare exceptions.\n"
                "• Device-ID-not-found is now a checklist, not a dead end.\n"
                "• FIXED (build): v1.0.10's 2 test failures — scroll test\n  now uses the platform's real wheel event; list batch mode no\n  longer reconfigures rows per insert.",
+    "v1.0.12": "• FIXED (build): v1.0.11 never shipped — its Actions build failed\n  on ONE flaky test (signaling /health timed out on the slow\n  Windows runner). The test is now timing-robust: wait for the\n  server to listen, 15s timeout, 3 attempts with backoff.\n"
+               "• No product change vs v1.0.11 — v1.0.11 is superseded\n  and was never shipped. Ship only v1.0.12+.",
 }
 
 GENERIC_CHANGELOG = "Is version me stability + bug fixes."
