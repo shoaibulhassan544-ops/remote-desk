@@ -1,4 +1,35 @@
-# Troubleshooting — RemoteDesk v1.0.10
+# Troubleshooting — RemoteDesk v1.0.11
+
+## Connect nahi ho raha — Device ID nahi mila / IP se bhi connect nahi ho raha (fixed in v1.0.11)
+
+- **Pehle Connection Test dabao** (Home ya Remote Control pe, Connect
+  ke paas). Wo 4 steps dikhata hai — 1) Address resolve 2) TCP
+  connect 3) TLS handshake 4) Host jawab — har step PASS/FAIL, saaf
+  lafzon me. Jo step FAIL ho, uski detail me uska fix likha hota hai.
+- **Device ID (Address) nahi mila?** Checklist:
+  1) **Dusre PC pe Start Hosting ON hai?** (Home → HOST THIS PC →
+     Start Hosting — bina iske dusra PC connect nahi ho sakta.)
+  2) **Dono PC ek hi Wi-Fi pe hain?** (Alag Wi-Fi / mobile hotspot
+     pe LAN discovery kaam nahi karti — phir IP ya Signaling Server
+     chahiye.)
+  3) **Dusre PC pe Windows Firewall me RemoteDesk Allow hai?**
+     Settings → Network → Windows Firewall → "Windows Firewall me
+     Allow karo" (Admin prompt me Yes dabao). Ya installer ye rule
+     khud bana deta hai.
+  4) **Find on LAN** dabao — agar device list me aa jaye to usko
+     select karo.
+  Phir bhi nahi? Us PC ka **IP address** likh ke Connect dabao.
+- **IP se bhi connect nahi ho raha?** Sab se common wajah Windows
+  Firewall hai (upar step 3). Dusri wajah: dusre PC pe Hosting OFF
+  hai, ya IP galat hai (dusre PC ke Home pe uska LAN IP likha hota
+  hai), ya dono PC alag network pe hain. Connection Test ka step 2
+  (TCP) FAIL hoga to Firewall/Hosting hi wajah hai; step 3 (TLS)
+  FAIL hoga to dono PC pe version alag hai — dono pe latest
+  RemoteDesk install karo.
+- **"Host ne connection mana kiya"?** Dusre PC pe Start Hosting ON
+  karo + Firewall me Allow karo (upar step 3).
+- **"Host tak pahuncha nahi (timeout)"?** IP sahi hai? Dono PC ek hi
+  Wi-Fi pe hain? Firewall me Allow hai?
 
 ## "Failed to load Python DLL ... python311.dll: LoadLibrary: The specified module could not be found" (portable EXE)
 - WHAT IT MEANS: the portable EXE is a self-extracting bundle — on

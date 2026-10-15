@@ -1,4 +1,74 @@
-# TEST REPORT — RemoteDesk v1.0.10 (honest status)
+# TEST REPORT — RemoteDesk v1.0.11 (honest status)
+
+## v1.0.11 addendum (this session) — Connect actually works + v1.0.10 build failures fixed
+
+**URGENT: v1.0.10 NEVER SHIPPED.** Its Actions build FAILED in "Run
+tests" (2 failures), the smoke steps never ran, and NO release assets
+exist. v1.0.11 supersedes v1.0.10. The 2 failures and their fixes:
+
+1. `tests/test_scroll_smooth.py::test_scroll_moves_one_equal_step_per_event_and_no_rebuild`
+   — `assert False`. ROOT CAUSE: the test always sent the Linux-only
+   `<Button-5>` wheel event. On Windows, Tk/CTk scroll on
+   `<MouseWheel>` with a delta — Button-5 does nothing there, so the
+   view never moved. NOT a product bug (the app scrolls fine on
+   Windows; the test spoke the wrong platform's event). FIX: the test
+   now generates the platform's real wheel event (win32 →
+   `<MouseWheel>` delta=-120; X11 → `<Button-5>`; macOS →
+   `<MouseWheel>` delta=-1).
+2. `tests/test_tab_switch_no_rebuild.py::test_ctk_list_batches_bulk_refresh`
+   — "batched inserts must configure 5 rows once each, got 10". ROOT
+   CAUSE (two parts): (a) CODE: `_CTkList.insert/delete` re-bound every
+   row's `command` with `btn.configure(command=...)` — one app-driven
+   configure per insert + one per remaining row per delete. FIX:
+   `command=` is now passed in the `CTkButton` constructor (zero
+   configure calls — verified by probe) and clicks resolve the row
+   index dynamically from the button identity (`_click_btn`), so
+   insert/delete do ZERO app-driven configures. (b) TEST: it counted
+   ALL `configure` calls, including CTk-internal ones during button
+   construction/mapping that differ between Linux and Windows — that
+   is why the same test passed on Linux (5) and failed on Windows
+   (10). FIX: the test now counts only REFRESH configures
+   (`fg_color`/`text_color` kwargs): 0 during batch, exactly 5 at
+   end_batch. This makes the test platform-proof.
+
+CONNECT FIXES (user: Device ID "739738074" → "same Wi-Fi pe nahi mila",
+AND IP connect also failed):
+- **LAN discovery:** broadcaster sent ONLY to `<broadcast>`
+  (255.255.255.255), which Windows / home routers drop too often.
+  FIX (`app/discovery.py`): targets are now subnet-directed broadcast
+  FIRST (computed via stdlib `ipaddress`, e.g. 192.168.1.255 for
+  192.168.1.50/24), then `<broadcast>`, then loopback. Listener binds
+  `""` = 0.0.0.0 (all interfaces). Proven by
+  `tests/test_connect_diagnostics.py` (fake sockets).
+- **Windows Firewall:** nothing ever added a firewall exception, so
+  Defender Firewall silently dropped inbound TCP + UDP on first run —
+  the most likely cause of IP-connect failure. FIX: setup.iss `[Run]`
+  adds a netsh Allow rule (runhidden + unchecked, never fails the
+  install); Settings → Network has a one-click "Windows Firewall me
+  Allow karo" button (`app/firewall.py`: plain netsh first, then UAC
+  "runas" prompt; non-Windows shows a plain message).
+- **Real connect errors:** `client.connect` returned a bare exception.
+  FIX: `classify_connect_error()` maps refused / timeout / TLS / DNS /
+  unreachable to plain-words messages naming the cause AND the fix.
+- **Dead-end messages → checklist:** Device-ID-not-found (both in
+  `connect_target.py` and the UI lan_scan path) now shows the
+  4-step checklist (Hosting ON? Same Wi-Fi? Firewall Allow? Find on
+  LAN) + IP fallback.
+- **Connection Test (new, `app/connection_test.py`):** 4 steps
+  (resolve → TCP → TLS → host jawab), each PASS/FAIL with plain
+  words, each with its own 5s timeout, never raises, threaded in the
+  UI. Buttons on Home + Remote Control; results in a dialog.
+- **Hosting visibility:** Home now shows "Hosting ON — Port X — LAN
+  IP Y — is Address pe dusra PC connect kar sakta hai" (cached LAN
+  IP). `HostServer.start()` returns False + exact `_serve_error`
+  when the port cannot bind — the UI shows it instead of pretending
+  hosting works.
+- **Tests this session:** `python3 -m pytest -q` → **159 passed,
+  9 skipped** (plain, live-Tk tests skip without a display);
+  **Xvfb: 167 passed, 1 skipped** (all live-Tk tests run, incl. the
+  two fixed v1.0.10 tests). Xvfb UI smoke: all pages, Connection
+  Test dialog, Firewall row, hosting status line — no exceptions.
+  `python3 run.py --version` → `1.0.11`.
 
 ## v1.0.10 addendum (this session) — Home alignment + lag / smoothness
 
