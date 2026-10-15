@@ -86,5 +86,5 @@ def test_build_workflow_verifies_exe_icon():
     assert yml.index("pyinstaller remote_desk.spec") < yml.index("Verify EXE icon")
 
 
-def test_version_still_1_0_7():
-    assert '"1.0.7"' in _iss()
+def test_version_still_1_0_8():
+    assert '"1.0.8"' in _iss()

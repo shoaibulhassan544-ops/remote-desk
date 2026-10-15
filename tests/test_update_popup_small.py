@@ -45,20 +45,22 @@ def test_every_changelog_entry_is_nonempty():
 
 
 def test_popup_has_only_two_main_buttons():
-    """Source-level guard: the popup builds Download + Later as the two
-    main buttons; the release-page button is the failure-only fallback."""
+    """Source-level guard (v1.0.8 CTk rewrite): the popup builds Download +
+    Later as the two main buttons; the release-page button is the
+    failure-only fallback in _on_update_done, NOT a third popup button."""
     import re
     src = open(os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "app", "ui.py"), encoding="utf-8").read()
     popup = src[src.index("def _show_update_popup"):]
-    popup = popup[:popup.index("def _close_update_popup")]
+    popup = popup[:popup.index("def _on_update_progress")]
     assert "Download Update" in popup
     assert '"Later"' in popup or "'Later'" in popup or "text=\"Later\"" in popup
-    # Fallback is wired through the dedicated show-fallback helper, not
-    # as a third always-visible button.
-    assert "_show_update_fallback" in popup or "fallback" in popup.lower()
-    # Buttons use a grid with weights so nothing can clip (v1.0.6 bug).
-    assert "columnconfigure" in popup
+    # Exactly two main buttons built in the popup.
+    assert len(re.findall(r"self\._btn\(btn_row", popup)) == 2
+    # Release-page link must NOT be built inside the popup — it is the
+    # failure-only fallback in _on_update_done.
+    assert "Open release page" not in popup
+    assert "release_url" in popup or "Open release page" in src[src.index("def _on_update_done"):]
     # Small popup: ~520x420, not the old 560x500.
-    assert '520, 420' in popup or "520, 420" in popup
+    assert "520x420" in popup
