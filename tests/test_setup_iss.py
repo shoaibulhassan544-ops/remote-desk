@@ -87,7 +87,7 @@ def test_build_workflow_verifies_exe_icon():
 
 
 def test_version_still_1_0_9():
-    assert '"1.0.9"' in _iss()
+    assert '"1.0.10"' in _iss()
 
 
 def test_license_file_present():
