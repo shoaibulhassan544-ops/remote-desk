@@ -8,6 +8,21 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
+## What it does (v1.0.9 — auto-install + clean "What's new" + installer EULA)
+
+- **AUTO-INSTALL:** after an update downloads, the app closes itself
+  and the installer starts on its own — no manual installer button to
+  press, no locked-file "Access is denied" error, no uninstall-first.
+  The installer is launched detached and the app exits BEFORE files
+  are replaced. [Later] cancels the auto-install.
+- **"What's new" fixed:** GitHub's auto-appended compare link is
+  stripped — the popup shows only the real changelog, never a bare
+  GitHub URL.
+- **Installer EULA:** the installer now shows the RemoteDesk license
+  agreement (LICENSE.txt) before installing.
+- **In-place upgrade:** install folder + privilege level unchanged
+  since v1.0.5, so every version upgrades in place. Ship only v1.0.9+.
+
 ## What it does (v1.0.8 — CustomTkinter UI rebuild: the UI finally LOOKS modern)
 
 v1.0.7 changed the FLOW but still LOOKED like old flat tkinter (the
@@ -26,7 +41,7 @@ auto-accept. Unattended (password, opt-in) is the only no-Accept
 path. All v1.0.7 logic reused from `app/*` — protocol/security
 untouched. Justified non-CTk pieces: `tk.Canvas` (viewer drawing
 surface), `ttk.Treeview` (history table), tkinter file/message
-dialogs. Ship only v1.0.8+.
+dialogs. Ship only v1.0.9+ (v1.0.8 superseded by v1.0.9).
 
 ## What it does (v1.0.7 — 3 real bug fixes + fresh UI rebuild)
 

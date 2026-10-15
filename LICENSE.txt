@@ -1,0 +1,47 @@
+RemoteDesk — End-User License Agreement (EULA)
+
+By installing or using RemoteDesk ("the Software"), you agree to the
+terms below. If you do not agree, do not install or use the Software.
+
+1. WHAT THE SOFTWARE IS
+RemoteDesk is authorized remote-assistance software for your own
+computers. It lets a person view and control another computer ONLY
+with that computer owner's explicit, per-session consent (an Accept
+click on the host), or through unattended access that the owner
+explicitly enabled with a password.
+
+2. AUTHORIZED USE ONLY
+You may use the Software ONLY on computers you own, or on computers
+whose owner has given you clear permission to access. You must NOT
+use the Software to access any computer without its owner's consent,
+to spy on anyone, to install it silently, or to bypass any security
+control. Any such use is a violation of this agreement and may be
+unlawful.
+
+3. YOUR RESPONSIBILITY
+You are solely responsible for using the Software lawfully and for
+obtaining the consent of the owner of any remote computer you
+connect to. The developer is not responsible for misuse by users.
+
+4. NO HIDDEN ACCESS
+The Software contains no backdoor, no hidden access, and no silent
+enrollment. Every assisted session requires an explicit Accept on
+the host; unattended access is opt-in, password-protected, and can
+be revoked at any time by the host owner.
+
+5. AS-IS, NO WARRANTY
+The Software is provided "AS IS", without warranty of any kind,
+express or implied, including fitness for a particular purpose.
+Use it at your own risk.
+
+6. LIABILITY
+To the maximum extent permitted by law, the developer is not liable
+for any direct, indirect, incidental, or consequential damages
+arising from the use or inability to use the Software, including
+data loss or unauthorized access resulting from misuse.
+
+7. CHANGES
+This agreement may be updated with new releases of the Software.
+Continued use after an update means you accept the updated terms.
+
+Developed by Shoaib Azeez.

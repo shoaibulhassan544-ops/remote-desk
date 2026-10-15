@@ -4,7 +4,7 @@
 ; Version is read from the app at build time — update app/version.py, then rebuild.
 
 #define MyAppName "RemoteDesk"
-#define MyAppVersion "1.0.8"
+#define MyAppVersion "1.0.9"
 #define MyAppPublisher "Shoaib Azeez"
 #define MyAppExeName "RemoteDesk.exe"
 
@@ -26,6 +26,15 @@ WizardSmallImageFile=assets\installer_small.bmp
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64
+; v1.0.9 — INSTALLER LICENSE AGREEMENT: the installer now shows the
+; RemoteDesk EULA (LICENSE.txt) on the license page before installing.
+LicenseFile=LICENSE.txt
+; v1.0.9 — IN-PLACE UPGRADE: DefaultDirName ({autopf}\RemoteDesk) and
+; PrivilegesRequired=lowest are UNCHANGED since v1.0.5, so every
+; version installs to the SAME folder and upgrades replace files in
+; place — no uninstall-first dance. (The v1.0.5–v1.0.8 upgrade failures
+; were the running app locking RemoteDesk.exe, NOT a changed folder;
+; v1.0.9 fixes that by closing the app before the installer runs.)
 ; v1.0.6 — UPGRADE FIX: the old RemoteDesk.exe was often still RUNNING when
 ; the user installed the new version, so Windows locked the file and the
 ; installer failed with "DeleteFile failed; code 5. Access is denied."
