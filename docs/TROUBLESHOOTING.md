@@ -1,4 +1,45 @@
-# Troubleshooting — RemoteDesk v1.0.9
+# Troubleshooting — RemoteDesk v1.0.10
+
+## "Failed to load Python DLL ... python311.dll: LoadLibrary: The specified module could not be found" (portable EXE)
+- WHAT IT MEANS: the portable EXE is a self-extracting bundle — on
+  first run it unpacks Python + all libraries into a temp folder
+  (`%TEMP%\_MEIxxxxxx`) and loads `python311.dll` from there. This
+  error means that unpack/load step failed, NOT that your PC is
+  missing Python (the EXE carries its own Python).
+- MOST LIKELY CAUSES (in order):
+  1. **Incomplete / corrupt download** — the ~20 MB file got cut off
+     (browser/Drive hiccup). Re-download fresh and check the size.
+  2. **Antivirus blocking the temp extraction folder** — some AVs
+     quarantine the unpacked DLLs. Add an antivirus exclusion for
+     RemoteDesk, or pause AV for the first run only.
+  3. **Missing VC++ Redistributable 2015–2022 (x64)** on the PC —
+     the bundled runtime needs it. Install it from Microsoft, then
+     run RemoteDesk again.
+  4. **Stale temp folders** — delete `%TEMP%\_MEI*` folders and retry.
+- FIXES THAT WORK:
+  - Prefer the **Setup installer** (`Setup-RemoteDesk-*.exe`) over the
+    portable EXE — it installs the files properly instead of
+    extracting to temp every run, so this error basically never
+    happens with it.
+  - Re-download, clear `%TEMP%\_MEI*`, install VC++ Redist 2015–2022
+    x64, allow RemoteDesk in antivirus.
+- PREVENTION (v1.0.10+): CI now smoke-tests BOTH the built EXE and
+  the installed EXE with `--version` on a real Windows runner
+  BEFORE any release publishes (see `.github/workflows/build.yml`),
+  and UPX compression is disabled — UPX-compressed onefile bundles
+  are a known cause of AV interference + DLL load failures.
+
+## App lags / jerky scrolling / lag on tab switch (fixed in v1.0.10)
+- ROOT CAUSE (pre-v1.0.10): every tab switch rebuilt the trusted /
+  history / file lists (disk reads + destroy/recreate of every row);
+  refresh helpers reconfigured widgets even when nothing changed;
+  the viewer redrew every frame at full host rate.
+- Fix in v1.0.10: only the shown page refreshes, and only when data
+  changed; no-op refreshes are skipped; viewer frames capped at
+  ~15 fps with identical-frame skip; update check deferred until
+  after first paint. Scrolling moves one equal step per wheel notch.
+- If scrolling still feels jumpy on a very slow PC: close other heavy
+  apps — the viewer + CTk redraws are the heaviest part.
 
 ## "Upgrade asks to uninstall first / Access denied" (fixed in v1.0.9)
 - ROOT CAUSE (pre-v1.0.9): the update flow showed a manual installer

@@ -1,4 +1,75 @@
-# TEST REPORT — RemoteDesk v1.0.9 (honest status)
+# TEST REPORT — RemoteDesk v1.0.10 (honest status)
+
+## v1.0.10 addendum (this session) — Home alignment + lag / smoothness
+
+ROOT CAUSES (found by reading app/ui.py, not guessing):
+- **New-tab lag:** `_show_page()` rebuilt trusted/history/file lists on
+  EVERY switch — disk reads + destroy/recreate of every row — plus
+  unconditional pack/pack_forget of the signaling/internet blocks.
+  FIX: only the shown page refreshes; `_set_visible()` skips pack ops
+  when visibility is unchanged; `_CTkList` gained batch mode (one
+  refresh per bulk rebuild instead of O(n^2) per-row configures).
+- **Redundant reconfigures:** `_refresh_pill` / `_refresh_nav` /
+  `_refresh_history` / `_refresh_home_history` / `_refresh_file_dest`
+  reconfigured widgets even when nothing changed. FIX: each caches
+  its last state and returns early when identical.
+- **Viewer churn:** `_on_frame` decoded + `canvas.delete("all")` +
+  recreated the PhotoImage on EVERY incoming frame at full host rate,
+  and updated the quality label per frame. FIX: max ~15 fps, skip
+  byte-identical frames, reuse one canvas image item, quality label
+  at most 2x/sec.
+- **Startup:** the update-check network thread started before first
+  paint. FIX: deferred to `after(500, ...)`.
+- **Scroll:** app adds NO global `bind_all` wheel handlers of its own
+  (source guard); CTk's one handler moves exactly one step per notch
+  (proven by test: equal steps, zero widget churn while scrolling).
+  The scratchy feel was the rebuild/reconfigure churn firing
+  alongside scroll redraws, now removed.
+- **ALIGNMENT (user's v1.0.8 screenshot):** top cards got
+  `rowconfigure(0, weight=1)` + equal row structure (HOST gained
+  Status + Port rows mirroring ADDRESS's Status + IP rows); Copy
+  button height 36 matches the 32px Device ID text; CONNECT card
+  bottom gaps made consistent; Recent/Activity log boxes shortened
+  (110→72, 130→88) so the primary cards fit the first screen.
+- **SIDEBAR (follow-up):** `side_bottom` padding 16→10 to match nav
+  buttons — pill, theme toggle and nav buttons now share ONE left and
+  ONE right edge; pill text centered; nav buttons all 40px; active
+  pill changes color only, never geometry; pill dot colors:
+  green = Idle/Connected, amber = Connecting, red = Error.
+- **SETTINGS (follow-up):** new `_settings_row()` grid helper —
+  label column left, control column right — applied to the password,
+  port, download-folder and connection-type rows.
+- **DLL-LOAD HARDENING + CI SMOKE TEST (critical addition):** the
+  user hit "Failed to load Python DLL ... python311.dll" on the
+  portable EXE — a build that had never been STARTED on Windows.
+  FIX: (1) `.github/workflows/build.yml` now runs TWO smoke tests
+  on the real Windows runner BEFORE any asset ships — built EXE
+  `--version` (exit 0, 60s timeout so a DLL-error dialog fails the
+  build instead of hanging) and silent-install (`/VERYSILENT
+  /SUPPRESSMSGBOXES /NORESTART /DIR=<temp>`) + installed EXE
+  `--version`. (2) `remote_desk.spec`: `upx=False` (UPX onefile
+  bundles are a known cause of AV interference + DLL load failures);
+  `excludes=[]` kept empty (no VC++ runtime DLLs excluded).
+  (3) `run.py` handles `--version` BEFORE importing `app.main`, so
+  the smoke test never touches Tkinter. Proven by
+  `tests/test_ci_smoke.py` (build.yml contains both smoke steps
+  before the release step; subprocess `run.py --version` prints the
+  version with rc 0). (4) New TROUBLESHOOTING entry for the DLL
+  error (re-download, clear `%TEMP%\\_MEI*`, VC++ Redist 2015–2022
+  x64, AV exclusion, prefer the Setup installer).
+- **Tests this session:** `python3 -m pytest -q` → **134 passed,
+  9 skipped** (129 pre-DLL-hardening + 5 new test_ci_smoke.py;
+  9 skipped = 1 pre-existing UDP skip + 8 new live-Tk tests
+  skipping without a display and PASSING under Xvfb:
+  test_tab_switch_no_rebuild.py ×3, test_refresh_noop.py ×4,
+  test_scroll_smooth.py ×2); `python3 run.py --version` → `1.0.10`;
+  Xvfb screenshots verified: Home top cards equal height, Copy row
+  level, sidebar edges aligned, Settings rows aligned.
+- **Honest note:** Home's lower cards (Recent / Quick actions /
+  Activity log) still sit below the fold at 1000x680 and scroll —
+  the full page cannot fit that height at readable font sizes. The
+  primary Address / Host / Connect section fits the first screen,
+  and scrolling is now smooth instead of jerky.
 
 ## v1.0.9 addendum (this session) — auto-install + clean "What's new" + installer EULA
 - **AUTO-INSTALL (user screenshot, v1.0.7→v1.0.8 flow):** the old flow
