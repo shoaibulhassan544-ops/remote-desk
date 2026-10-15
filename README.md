@@ -8,6 +8,26 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
+## What it does (v1.0.8 — CustomTkinter UI rebuild: the UI finally LOOKS modern)
+
+v1.0.7 changed the FLOW but still LOOKED like old flat tkinter (the
+user's screenshot proved it: flat rectangles, no card contrast, no
+rounded corners, no depth). Root cause: tkinter's native widgets
+cannot look modern no matter the colors. v1.0.8 rebuilds `app/ui.py`
+on **CustomTkinter** — real rounded cards (`CTkFrame`,
+corner_radius=14), rounded buttons/entries (corner_radius=10),
+`CTkSwitch` toggles, `CTkComboBox` dropdowns, `CTkProgressBar`,
+`CTkScrollableFrame` history/log, `CTkToplevel` dialogs — same
+tokens (card `#16263F` on bg `#0B1220`, 1px border `#22365C`,
+accent `#2E7DFF` / hover `#1D6FE0`), same flows, same security:
+Address → Enter → host popup (requester details + permissions) →
+Accept → control. NO pairing code, NO auto-connect, NO trusted
+auto-accept. Unattended (password, opt-in) is the only no-Accept
+path. All v1.0.7 logic reused from `app/*` — protocol/security
+untouched. Justified non-CTk pieces: `tk.Canvas` (viewer drawing
+surface), `ttk.Treeview` (history table), tkinter file/message
+dialogs. Ship only v1.0.8+.
+
 ## What it does (v1.0.7 — 3 real bug fixes + fresh UI rebuild)
 
 - **BUG A FIXED — Address (Device ID) now resolves on LAN.** The host
