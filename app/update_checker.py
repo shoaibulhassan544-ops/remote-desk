@@ -54,6 +54,12 @@ CHANGELOG = {
                "• FIXED: lag — tab switches no longer rebuild lists (only\n  the shown page refreshes, and only when data changed).\n"
                "• FIXED: scrolling is smooth — no per-notch re-layout,\n  viewer frames capped at ~15 fps with identical-frame skip.\n"
                "• Sidebar: Idle pill + Light/Dark toggle now share the\n  exact width/padding of the nav buttons; Settings rows aligned\n  into one label column + one control column.",
+    "v1.0.11": "• FIXED: Connect — Device ID now resolves via subnet-directed\n  broadcast (192.168.1.255) + limited broadcast + loopback, so LAN\n  discovery survives Windows dropping 255.255.255.255.\n"
+               "• FIXED: Windows Firewall — installer adds an Allow rule\n  for RemoteDesk, and Settings → Network has a one-click\n  “Windows Firewall me Allow karo” button (UAC prompt).\n"
+               "• NEW: Connection Test button — 4 steps (resolve → TCP →\n  TLS → host jawab) each PASS/FAIL in plain words.\n"
+               "• FIXED: IP-connect errors now say the REAL reason\n  (refused / timeout / TLS) + what to fix — no bare exceptions.\n"
+               "• Device-ID-not-found is now a checklist, not a dead end.\n"
+               "• FIXED (build): v1.0.10's 2 test failures — scroll test\n  now uses the platform's real wheel event; list batch mode no\n  longer reconfigures rows per insert.",
 }
 
 GENERIC_CHANGELOG = "Is version me stability + bug fixes."

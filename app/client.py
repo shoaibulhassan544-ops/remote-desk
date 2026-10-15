@@ -13,6 +13,36 @@ from . import config, protocol, security
 from .session import Session, SessionManager
 
 
+def classify_connect_error(exc: BaseException | str, host: str, port: int) -> str:
+    """Map a raw connect failure to a plain-words, actionable message.
+
+    The user used to get a bare exception ("[WinError 10061] ...") and
+    had no idea what to fix. Every branch names the cause AND the fix.
+    Never raises; falls back to the raw message when nothing matches.
+    """
+    raw = str(exc) if not isinstance(exc, str) else exc
+    low = raw.lower()
+    if isinstance(exc, ConnectionRefusedError) or "connection refused" in low \
+            or "10061" in low or "actively refused" in low:
+        return ("Host ne connection mana kiya — dusre PC pe Start Hosting ON karo "
+                "+ Windows Firewall me RemoteDesk Allow karo "
+                "(Settings → Network → Windows Firewall).")
+    if isinstance(exc, (TimeoutError, socket.timeout)) or "timed out" in low \
+            or "timeout" in low or "10060" in low:
+        return ("Host tak pahuncha nahi (timeout) — IP sahi hai? Dono PC ek hi "
+                "Wi-Fi pe hain? Firewall me RemoteDesk Allow hai?")
+    if isinstance(exc, ssl.SSLError) or "ssl" in low or "tls" in low \
+            or "handshake" in low or "certificate" in low or "eof occurred" in low:
+        return ("Security handshake fail — dono PC pe same version hai? "
+                "Dono pe latest RemoteDesk install karo.")
+    if isinstance(exc, socket.gaierror) or "name or service not known" in low \
+            or "getaddrinfo failed" in low or "11001" in low:
+        return ("Address ka naam resolve nahi hua — IP ya Device ID sahi likho.")
+    if "network is unreachable" in low or "10051" in low:
+        return ("Network unreachable — Wi-Fi connected hai? IP sahi hai?")
+    return f"Connect nahi hua ({host}:{port}): {raw}"
+
+
 class RemoteClient:
     def __init__(self, device_id: str, device_name: str,
                  on_frame=None, on_status=None, on_disconnect=None):
@@ -52,7 +82,9 @@ class RemoteClient:
             ctx.verify_mode = ssl.CERT_NONE  # identity via host Accept (assisted) or unattended password
             conn = ctx.wrap_socket(raw, server_hostname=host)
         except (OSError, ssl.SSLError, ValueError) as exc:
-            return False, f"Could not connect to {host}:{port}: {exc}"
+            # v1.0.11: surface the REAL reason in plain words (firewall /
+            # hosting OFF / timeout / TLS), never a bare exception.
+            return False, classify_connect_error(exc, host, int(port))
         self._conn = conn
         buf = bytearray()
         try:

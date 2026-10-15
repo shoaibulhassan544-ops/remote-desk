@@ -21,8 +21,13 @@ HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-.]*$")
 DEVICE_ID_RE = re.compile(r"^\d{9}$")
 
 DEVICE_NOT_FOUND_ERROR = (
-    "Ye Device ID same Wi-Fi pe nahi mila. Us PC ka IP address likho, "
-    "ya Settings me Signaling Server lagao."
+    "Ye Device ID same Wi-Fi pe nahi mila.\n"
+    "Checklist: 1) Dusre PC pe Start Hosting ON hai? "
+    "2) Dono PC ek hi Wi-Fi pe hain? "
+    "3) Dusre PC pe Windows Firewall me RemoteDesk Allow hai? "
+    "(Settings → Network → Windows Firewall) "
+    "4) Phir Find on LAN dabao. "
+    "Ya us PC ka IP address likho."
 )
 NO_SIGNALING_URL_ERROR = (
     "Signaling server URL set nahi hai — Settings me daalo ya Direct IP use karo."
@@ -36,8 +41,19 @@ def digits_only(text: str) -> str:
 
 
 def looks_like_bare_device_id(text: str) -> bool:
-    """True if `text` is just a 9-digit Device ID (spaces allowed)."""
-    return bool(DEVICE_ID_RE.match(digits_only(text or "")))
+    """True if `text` is just a 9-digit Device ID (spaces allowed).
+
+    v1.0.11: MUST reject anything containing non-digit/non-space
+    characters. Before this, "192.168.1.42" was misclassified as a
+    Device ID because its digits ("192168142") total exactly 9 —
+    so typing that IP made the app try a Device-ID LAN lookup, fail,
+    and show "Device ID nahi mila" instead of connecting to the IP.
+    That is one real reason the user's IP connect failed.
+    """
+    text = text or ""
+    if re.search(r"[^\d\s]", text):
+        return False
+    return bool(DEVICE_ID_RE.match(digits_only(text)))
 
 
 def looks_like_ipv4(text: str) -> bool:

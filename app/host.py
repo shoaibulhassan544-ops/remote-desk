@@ -47,22 +47,32 @@ class HostServer:
         # connect before the server is ready (first-run TLS keygen
         # otherwise made connect race and fail with "Connection refused").
         self._ready = threading.Event()
+        # v1.0.11: exact serve failure (e.g. port bind error) so the UI
+        # can show WHY hosting did not start instead of pretending it did.
+        self._serve_error: str | None = None
         self._thread: threading.Thread | None = None
         self._conn = None
         self._broadcaster: DiscoveryBroadcaster | None = None
 
     # ------------------------------------------------------------- lifecycle
-    def start(self):
+    def start(self) -> bool:
+        """Start serving + broadcasting. Returns True only if the server
+        is actually listening (False = hosting did NOT start; see
+        self._serve_error for the exact reason)."""
         if self._thread and self._thread.is_alive():
-            return
+            return self._serve_error is None
         self._stop.clear()
         self._ready.clear()
+        self._serve_error = None
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
         # Wait until _serve is actually listening (or has failed) —
         # without this, an immediate connect races first-run TLS
         # key generation and fails with "Connection refused".
         self._ready.wait(timeout=15.0)
+        if self._serve_error is not None:
+            self.on_log(f"Hosting failed: {self._serve_error}")
+            return False
         self.on_log(f"Hosting started on port {self.port}.")
         # BUG A FIX (v1.0.7): the host MUST broadcast its presence, or LAN
         # discovery can never find it and a Device ID (Address) can never
@@ -74,6 +84,7 @@ class HostServer:
         except Exception as exc:  # noqa: BLE001 — discovery is best-effort
             self._broadcaster = None
             self.on_log(f"LAN discovery broadcast unavailable: {exc}")
+        return True
 
     def stop(self):
         self._stop.set()
@@ -108,7 +119,11 @@ class HostServer:
             srv.listen(1)
             srv.settimeout(1.0)
         except OSError as exc:
-            self.on_log(f"Hosting failed: cannot listen on port {self.port}: {exc}")
+            # v1.0.11: record the exact failure so start() can report it
+            # instead of the UI silently pretending hosting works.
+            self._serve_error = (f"cannot listen on port {self.port}: {exc} — "
+                                 "port pehle se use me hai ya Firewall rok raha hai?")
+            self.on_log(f"Hosting failed: {self._serve_error}")
             self._ready.set()
             return
         self._ready.set()

@@ -57,7 +57,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import customtkinter as ctk
 
-from . import config, connect_target, internet, signaling, storage, update_checker
+from . import (config, connect_target, connection_test, firewall,
+               internet, signaling, storage, update_checker)
 from .client import RemoteClient
 from .device_id import format_device_id, get_device_name, load_or_create_device_id
 from .discovery import DiscoveryListener
@@ -177,23 +178,39 @@ class _CTkList(ctk.CTkScrollableFrame):
             except TypeError:
                 self._callback()
 
+    def _click_btn(self, btn):
+        """Click handler that resolves the row index DYNAMICALLY.
+
+        v1.0.11: the old code re-bound every row's ``command`` with
+        ``btn.configure(command=...)`` after every insert/delete (and
+        once per insert) — app-driven configure churn on every list
+        rebuild. Resolving the index from the button identity means a
+        row's command NEVER changes, so insert/delete do zero
+        app-driven configures.
+        """
+        for i, (b, _t) in enumerate(self._rows):
+            if b is btn:
+                self._click(i)
+                return
+
     def insert(self, index, text: str):
+        # v1.0.11: pass command= in the constructor (zero configure
+        # calls) instead of btn.configure(command=...) afterwards.
+        # The holder cell lets the lambda see the button being created.
+        holder: dict = {}
         btn = ctk.CTkButton(self, text=str(text), anchor="w",
                             fg_color="transparent", text_color="#FFFFFF",
                             hover_color="#22365C", corner_radius=8,
-                            font=_font(11))
+                            font=_font(11),
+                            command=lambda: self._click_btn(holder.get("btn")))
+        holder["btn"] = btn
         if index == "end" or (isinstance(index, int) and index >= len(self._rows)):
-            idx = len(self._rows)
             self._rows.append((btn, str(text)))
-            btn.configure(command=lambda i=idx: self._click(i))
             btn.pack(fill="x", padx=4, pady=2)
         else:
             idx = int(index)
             self._rows.insert(idx, (btn, str(text)))
-            btn.configure(command=lambda i=idx: self._click(i))
             btn.pack(fill="x", padx=4, pady=2)
-            for j, (b, _t) in enumerate(self._rows):
-                b.configure(command=lambda i=j: self._click(i))
         self._refresh()
 
     def delete(self, first, last=None):
@@ -210,8 +227,9 @@ class _CTkList(ctk.CTkScrollableFrame):
             self._selected = None
         elif self._selected is not None and first <= self._selected <= last:
             self._selected = None
-        for j, (b, _t) in enumerate(self._rows):
-            b.configure(command=lambda i=j: self._click(i))
+        # v1.0.11: NO re-binding of row commands here — _click_btn
+        # resolves the index dynamically, so delete does zero
+        # app-driven configures (previously: one per remaining row).
         self._refresh()
 
     def get(self, index):
@@ -274,6 +292,13 @@ class RemoteDeskApp:
         self._viewer_image_id = None
         self._last_quality_at = 0.0
         self._last_quality_size = None
+        # v1.0.11: cached LAN IP (one lookup) for the unmissable
+        # "Hosting ON — Port X — LAN IP Y" status line.
+        self._lan_ip = internet.get_lan_ip()
+        self.host_info_var = tk.StringVar(
+            value=f"Port: {self.settings.get('port', config.DEFAULT_PORT)} • "
+                  f"LAN IP: {self._lan_ip}")
+        self.firewall_var = tk.StringVar(value="Not checked yet.")
         # Shared state vars.
         self.conn_type_var = tk.StringVar(
             value=self.settings.get("connection_type", "lan"))
@@ -425,6 +450,12 @@ class RemoteDeskApp:
                 btn.configure(fg_color="transparent", text_color=t["sidebar_fg"],
                               hover_color=t["border"])
 
+    def _hosting_status_text(self) -> str:
+        """Unmissable hosting line (v1.0.11): port + LAN IP + what to do."""
+        port = self.settings.get("port", config.DEFAULT_PORT)
+        return (f"Hosting ON — Port {port} — LAN IP {self._lan_ip} — "
+                "is Address pe dusra PC connect kar sakta hai")
+
     def _refresh_pill(self):
         if not hasattr(self, "status_pill"):
             return
@@ -445,7 +476,7 @@ class RemoteDeskApp:
             state = ("●  Error", t["danger"], "#FFFFFF", "Error — see status")
         elif hosting:
             state = ("●  Hosting ON", t["accent"], t["accent_fg"],
-                     "Hosting ON — waiting for connections")
+                     self._hosting_status_text())
         else:
             state = ("●  Idle", t["border"], "#22C55E", "Idle")
         if self._pill_state == state:
@@ -892,9 +923,10 @@ class RemoteDeskApp:
                                 text_color=self.theme["fg"]), "label_card").pack(side="left", padx=6)
         host_port_row = self._role(ctk.CTkFrame(hinner, fg_color="transparent"), "card")
         host_port_row.pack(fill="x", pady=(4, 0))
-        self._lbl(host_port_row,
-                  f"Port: {self.settings.get('port', config.DEFAULT_PORT)}",
-                  muted=True, size=10).pack(side="left")
+        self._role(ctk.CTkLabel(host_port_row,
+                                textvariable=self.host_info_var,
+                                font=_font(10), text_color=self.theme["muted"]),
+                   "muted_card").pack(side="left")
 
         card = self._card(body, "Connect to a remote device")
         self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
@@ -919,6 +951,7 @@ class RemoteDeskApp:
         self._btn(row2, "Connect", self._connect_from_home, "primary").pack(side="left", padx=(0, 6))
         self._btn(row2, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
         self._btn(row2, "Find on LAN", self._find_on_lan_home, "ghost").pack(side="left", padx=6)
+        self._btn(row2, "Connection Test", self._run_connection_test_home, "ghost").pack(side="left", padx=6)
         self._lbl(card, "1) Dusre PC pe Start Hosting dabao, uska Address lo. "
                   "2) Yahan Address likh ke Connect dabao — dusre PC pe Accept ka popup aayega.",
                   muted=True, wrap=640).pack(anchor="w", pady=(10, 2))
@@ -1010,6 +1043,7 @@ class RemoteDeskApp:
         self._btn(btns, "Disconnect", self._disconnect, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Scan LAN for devices", self._scan_lan, "ghost").pack(side="left", padx=6)
         self._btn(btns, "Find on LAN", self._find_on_lan_rc, "ghost").pack(side="left", padx=6)
+        self._btn(btns, "Connection Test", self._run_connection_test_rc, "ghost").pack(side="left", padx=6)
         self._role(ctk.CTkLabel(card, textvariable=self.connect_status_var,
                                 font=_font(11), text_color=self.theme["muted"],
                                 wraplength=640, justify="left"), "muted_card").pack(
@@ -1524,6 +1558,18 @@ class RemoteDeskApp:
                   "public IP. It works when UPnP succeeds or port forwarding is set; "
                   "strict / CGNAT routers need a relay server (not included).",
                   muted=True, wrap=640).pack(anchor="w", pady=(8, 0))
+        card_fw = self._card(body, "Windows Firewall")
+        self._lbl(card_fw, "Windows Firewall pehli dafa inbound connection ko "
+                  "chup-chaap rok deta hai — is liye IP se connect bhi fail ho "
+                  "sakta hai jabke sab sahi hai. Neeche wala button RemoteDesk "
+                  "ke liye Allow rule banata hai.",
+                  muted=True, wrap=640).pack(anchor="w")
+        self._btn(card_fw, "Windows Firewall me Allow karo",
+                  self._add_firewall_rule, "primary").pack(anchor="w", pady=(10, 0))
+        self._role(ctk.CTkLabel(card_fw, textvariable=self.firewall_var,
+                                font=_font(11), wraplength=600, justify="left",
+                                text_color=self.theme["muted"]), "muted_card").pack(
+                                    anchor="w", pady=(8, 0))
         card_sig = self._card(body, "Signaling server (Device ID lookup)")
         self._lbl(card_sig, "AnyDesk-style: with a signaling server, controllers "
                   "connect with your Device ID instead of your IP. The server is "
@@ -1822,12 +1868,104 @@ class RemoteDeskApp:
                                int(self.settings.get("port", config.DEFAULT_PORT)),
                                self.settings, on_request=self._queue_request,
                                on_log=self._log)
-        self.host.start()
+        # v1.0.11: start() returns False + exact reason when the server
+        # cannot listen (port busy / firewall). NEVER pretend hosting
+        # works — show the real error and leave the button on Start.
+        if not self.host.start():
+            err = self.host._serve_error or "unknown error"
+            self.host = None
+            self.msg_queue.put(("banner", False))
+            self._log(f"Hosting start nahi hua: {err}")
+            self.connect_status_var.set(f"Hosting start nahi hua: {err}")
+            self._refresh_pill()
+            return
         self.host_btn.configure(text="■  Stop Hosting")
         self._refresh_pill()
         if self.settings.get("signaling_auto_register") and \
                 (self.settings.get("signaling_url", "") or "").strip():
             self._signaling_register_now()
+
+    def _add_firewall_rule(self):
+        """Settings → Network: add the Windows Firewall Allow rule.
+
+        Tries without elevation first; if that fails (standard account),
+        re-tries with a UAC prompt. Runs in a thread; status lands in
+        firewall_var in plain words. Non-Windows: plain message.
+        """
+        if sys.platform != "win32":
+            self.firewall_var.set("Firewall rule sirf Windows pe lagti hai.")
+            return
+        if not getattr(sys, "frozen", False):
+            self.firewall_var.set(
+                "Ye button installed version me kaam karega — "
+                "installer se install karo, phir yahan se Allow karo.")
+            return
+        self.firewall_var.set("Firewall rule add ho rahi hai…")
+        exe_path = sys.executable
+
+        def _thread():
+            ok, msg = firewall.add_firewall_rule(exe_path)
+            if not ok:
+                ok2, msg2 = firewall.add_firewall_rule_elevated(exe_path)
+                msg = msg2 if ok2 else f"{msg} {msg2}"
+                ok = ok2
+            self.root.after(0, lambda: self.firewall_var.set(msg))
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def _run_connection_test_home(self):
+        self._run_connection_test_for(self.home_address.get().strip())
+
+    def _run_connection_test_rc(self):
+        self._run_connection_test_for(self.connect_host.get().strip())
+
+    def _run_connection_test_for(self, address: str):
+        """Connection Test: 4 steps in a thread, results in a dialog."""
+        if not address:
+            self.connect_status_var.set(
+                "Pehle Remote Address likho, phir Connection Test dabao.")
+            return
+        self.connect_status_var.set(f"Connection Test chal raha hai: {address} …")
+        settings = dict(self.settings)
+
+        def _thread():
+            results = connection_test.run_connection_test(address, settings)
+            self.root.after(0, lambda: self._show_connection_test_results(results))
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def _show_connection_test_results(self, results):
+        t = self.theme
+        dlg = ctk.CTkToplevel(self.root)
+        dlg.title("Connection Test")
+        dlg.geometry("560x360")
+        dlg.configure(fg_color=t["card"])
+        dlg.transient(self.root)
+        dlg.grab_set()
+        self._role(ctk.CTkLabel(dlg, text="Connection Test",
+                                font=_font(16, True),
+                                text_color=t["fg"]), "label_card").pack(
+                                    padx=20, pady=(16, 4), anchor="w")
+        marks = {"PASS": ("✓", t["success"]), "FAIL": ("✗", t["danger"]),
+                 "INFO": ("ℹ", t["accent"])}
+        for r in results:
+            mark, color = marks.get(r["status"], ("•", t["fg"]))
+            line = self._role(ctk.CTkLabel(dlg, anchor="w", justify="left",
+                                           font=_font(11),
+                                           text_color=color), "label_card")
+            line.pack(fill="x", padx=20, pady=2)
+            line.configure(text=f"{mark}  {r['step']} — {r['detail']}")
+        all_pass = all(r["status"] != "FAIL" for r in results)
+        hint = ("Sab steps PASS hain — ab Connect dabao, host pe Accept ka "
+                "popup aayega." if all_pass else
+                "Koi step FAIL hai — uski detail upar hai, usko fix karo, "
+                "phir dobara test karo.")
+        self._role(ctk.CTkLabel(dlg, text=hint, font=_font(11, True),
+                                wraplength=520, justify="left",
+                                text_color=t["fg"]), "label_card").pack(
+                                    padx=20, pady=(12, 6), anchor="w")
+        self._btn(dlg, "Close", dlg.destroy, "primary").pack(
+            padx=20, pady=(4, 16), anchor="w")
 
     def _new_pairing_code(self):
         # Kept for compatibility: pairing codes were removed from the
@@ -2012,10 +2150,15 @@ class RemoteDeskApp:
             info = found.get(did)
             if info and info.get("address"):
                 return info["address"], default_port, None
+            # v1.0.11: dead-end message replaced by a CHECKLIST — the user
+            # must know exactly what to verify on the OTHER PC.
             return "", default_port, (
-                f"Device {format_device_id(did)} not found on this LAN — check hosting "
-                "is ON on that PC and both PCs are on the same Wi-Fi, or enter its IP "
-                "directly, or use Signaling Server mode (Settings → Network).")
+                f"Device {format_device_id(did)} not found on this LAN.\n"
+                "Checklist: 1) Dusre PC pe Start Hosting ON hai? "
+                "2) Dono PC ek hi Wi-Fi pe hain? "
+                "3) Dusre PC pe Windows Firewall me RemoteDesk Allow hai? "
+                "(Settings → Network → Windows Firewall) "
+                "4) Phir Find on LAN dabao. Ya us PC ka IP address likho.")
         if action == "signaling_lookup":
             did = decision["device_id"]
             self.msg_queue.put(("connect_status",
@@ -2060,12 +2203,10 @@ class RemoteDeskApp:
                 self.msg_queue.put(("connect_status", f"Connection failed: {detail}"))
                 self._log(f"Connection failed: {detail}")
                 return
-            if "Could not connect" in msg:
-                detail = (f"Host not reachable at {host}:{resolved_port} — check hosting ON, "
-                          "same Wi-Fi for LAN, Public IP + port mapping for Internet, "
-                          f"or signaling registration. ({msg})")
-            else:
-                detail = msg
+            # v1.0.11: client.connect already returns a plain-words,
+            # actionable message (classify_connect_error) — show it as-is,
+            # never a bare exception.
+            detail = msg
             self.msg_queue.put(("viewer_status", f"Connection failed: {detail}"))
             self.msg_queue.put(("connect_status", f"Connection failed: {detail}"))
             self._log(f"Connection failed: {detail}")
