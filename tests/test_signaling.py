@@ -6,10 +6,12 @@ it over real HTTP. No network access beyond localhost.
 
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -30,6 +32,19 @@ class _Server:
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         self.url = f"http://127.0.0.1:{self.port}"
+        # v1.0.12: never assume the server is ready just because the
+        # thread started — on a slow/loaded CI runner the listener may
+        # not be accepting yet. Poll until a TCP connect succeeds
+        # (max ~10s); every test in this file inherits the guarantee.
+        deadline = time.monotonic() + 10.0
+        while True:
+            try:
+                with socket.create_connection(("127.0.0.1", self.port), timeout=1.0):
+                    break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.05)
         return self
 
     def __exit__(self, *exc):
@@ -93,9 +108,29 @@ def test_normalize_server_url():
 
 
 def test_health_endpoint():
+    # v1.0.12: this test flaked on the Windows CI runner with
+    # TimeoutError in socket readinto (slow/loaded machine, default-ish
+    # 5s timeout, single attempt). It is a timing flake, not a product
+    # bug — but a flaky test that blocks shipping is itself a bug.
+    # Fix: generous 15s timeout + up to 3 attempts with backoff, on top
+    # of _Server's wait-for-listening. Assertion unchanged: /health
+    # must return 200 with {"ok": true, "devices": 0}.
     with _Server() as srv:
-        with urllib.request.urlopen(f"{srv.url}/health", timeout=5) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
+        last_error = None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(
+                    f"{srv.url}/health", timeout=15
+                ) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                break
+            except (TimeoutError, urllib.error.URLError, OSError) as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                raise AssertionError(
+                    f"/health did not respond after 3 attempts: {exc!r}"
+                ) from exc
         assert body["ok"] is True
         assert body["devices"] == 0
-        time.sleep(0.01)
