@@ -14,6 +14,9 @@ a = Analysis(
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
+    # v1.0.10: excludes stays EMPTY on purpose — excluding any VC++
+    # runtime DLLs would break the bundle on PCs without that runtime
+    # ("Failed to load Python DLL"). One-file build is kept.
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -26,7 +29,12 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # v1.0.10: UPX DISABLED on purpose. UPX-compressed onefile bundles
+    # are a known cause of antivirus interference + extraction / DLL
+    # load failures ("Failed to load Python DLL ... python311.dll").
+    # A slightly bigger EXE that always starts beats a smaller one
+    # that sometimes fails to load.
+    upx=False,
     console=False,  # windowed GUI app
     icon='assets/icon.ico',  # EXE + taskbar icon
 )

@@ -15,7 +15,27 @@ Why this file exists:
 
 import sys
 
-from app.main import main
+
+def _early_version_exit() -> None:
+    """Handle --version BEFORE importing app.main at all.
+
+    v1.0.10: the CI smoke test runs the built EXE with --version to
+    prove the bundle extracts and the Python DLL loads. That check
+    must never touch Tkinter (no GUI window, no display needed) —
+    even if app.main ever gains a Tk import at module level. The
+    full argparse (--version / --check-update / --help) still lives
+    in app.main for the normal path.
+    """
+    args = sys.argv[1:]
+    if "--version" in args or "-V" in args:
+        from app.version import VERSION
+
+        print(VERSION)
+        raise SystemExit(0)
+
 
 if __name__ == "__main__":
+    _early_version_exit()
+    from app.main import main
+
     sys.exit(main())

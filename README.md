@@ -8,6 +8,33 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
+## What it does (v1.0.10 — Home alignment + lag/smoothness fixes)
+
+- **Home alignment:** the two top cards now have equal heights and the
+  same row structure (Status + Port on HOST, Status + IPs on ADDRESS),
+  the Device ID + Copy row sits on one level baseline, and CONNECT card
+  gaps have consistent breathing room at the bottom.
+- **Lag fixed (real causes, not color tweaks):** tab switches no longer
+  rebuild trusted/history/file lists (only the shown page refreshes,
+  and only when data actually changed); refresh helpers skip no-op
+  reconfigures; the viewer caps frames at ~15 fps and skips
+  byte-identical frames; the update check is deferred until after
+  first paint. Scrolling moves one equal step per wheel notch with no
+  widget rebuild. Proven by `tests/test_tab_switch_no_rebuild.py`,
+  `tests/test_refresh_noop.py`, `tests/test_scroll_smooth.py`
+  (live-Tk under Xvfb; they skip without a display).
+- **Sidebar:** the Idle pill + Light/Dark toggle now share the exact
+  width/padding of the nav buttons (one left edge, one right edge);
+  the pill shows a colored dot (green = Idle/Connected, amber =
+  Connecting, red = Error); nav buttons are all 40px tall and the
+  active pill changes color only, never geometry.
+- **Settings:** rows aligned into one label column + one control
+  column via a shared `_settings_row` helper.
+- **DLL-LOAD HARDENING + CI SMOKE TEST:** the portable EXE is now
+  smoke-tested on a real Windows runner (built EXE `--version` +
+  silent-install + installed EXE `--version`) BEFORE any release
+  ships; UPX disabled; no VC++ runtime DLLs excluded. Ship only v1.0.10+.
+
 ## What it does (v1.0.9 — auto-install + clean "What's new" + installer EULA)
 
 - **AUTO-INSTALL:** after an update downloads, the app closes itself
@@ -21,7 +48,7 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 - **Installer EULA:** the installer now shows the RemoteDesk license
   agreement (LICENSE.txt) before installing.
 - **In-place upgrade:** install folder + privilege level unchanged
-  since v1.0.5, so every version upgrades in place. Ship only v1.0.9+.
+  since v1.0.5, so every version upgrades in place. Ship only v1.0.10+.
 
 ## What it does (v1.0.8 — CustomTkinter UI rebuild: the UI finally LOOKS modern)
 
@@ -41,7 +68,7 @@ auto-accept. Unattended (password, opt-in) is the only no-Accept
 path. All v1.0.7 logic reused from `app/*` — protocol/security
 untouched. Justified non-CTk pieces: `tk.Canvas` (viewer drawing
 surface), `ttk.Treeview` (history table), tkinter file/message
-dialogs. Ship only v1.0.9+ (v1.0.8 superseded by v1.0.9).
+dialogs. Ship only v1.0.10+ (v1.0.8/v1.0.9 superseded by v1.0.10).
 
 ## What it does (v1.0.7 — 3 real bug fixes + fresh UI rebuild)
 
