@@ -1,4 +1,30 @@
-# TEST REPORT — RemoteDesk v1.0.11 (honest status)
+# TEST REPORT — RemoteDesk v1.0.12 (honest status)
+
+## v1.0.12 addendum (this session) — flaky signaling test fix; v1.0.11 never shipped
+
+**URGENT: v1.0.11 NEVER SHIPPED.** Its Actions build FAILED in "Run
+tests" (1 failure of 167: `tests/test_signaling.py::test_health_endpoint`
+— `TimeoutError` in `socket readinto` via `http.client` while reading
+the `/health` response; 166 passed, 1 skipped). The smoke steps never
+ran, and NO release assets exist. v1.0.12 supersedes v1.0.11.
+
+ROOT CAUSE: flaky network timing on the slow Windows CI runner, NOT a
+product bug — the test used a 5s timeout, a single attempt, and assumed
+the in-process server was accepting the moment its thread started.
+FIX (`tests/test_signaling.py` only, no product code changed):
+- `_Server` now waits for the server to actually be listening (poll
+  TCP connect to the port, up to ~10s) before any test runs — every
+  test in the file inherits this guarantee, fixing the same
+  assume-ready pattern everywhere (the other tests use the same
+  `_Server` + the client's own timeout-handling, which never raises).
+- `test_health_endpoint`: 15s timeout (was 5s) + up to 3 attempts with
+  0.5s/1.0s backoff on timeout/connection errors. The assertion is
+  UNCHANGED: `/health` returns 200 with `{"ok": true, "devices": 0}`.
+- Smoke-step labels in `build.yml` updated `(v1.0.10)` → `(v1.0.12)`.
+- Version bumped to 1.0.12 everywhere (`app/version.py`, `setup.iss`,
+  CHANGELOG entry, README, test version assertions).
+- `python3 -m pytest -q` run 3 TIMES in a row — all 3 runs fully
+  green (no flakes). Ship only v1.0.12+.
 
 ## v1.0.11 addendum (this session) — Connect actually works + v1.0.10 build failures fixed
 
