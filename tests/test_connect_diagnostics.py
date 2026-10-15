@@ -322,12 +322,12 @@ def test_connection_test_signaling_fallback():
 
 
 # ---------------------------------------------------------- version guards
-def test_version_is_1_0_12_everywhere():
+def test_version_is_1_0_13_everywhere():
     from app.version import VERSION
-    assert VERSION == "1.0.12"
+    assert VERSION == "1.0.13"
     iss = open(os.path.join(ROOT, "setup.iss"), encoding="utf-8").read()
-    assert '#define MyAppVersion "1.0.12"' in iss
-    assert "v1.0.12" in open(os.path.join(
+    assert '#define MyAppVersion "1.0.13"' in iss
+    assert "v1.0.13" in open(os.path.join(
         ROOT, "app", "update_checker.py"), encoding="utf-8").read()
 
 

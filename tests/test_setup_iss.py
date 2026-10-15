@@ -87,7 +87,7 @@ def test_build_workflow_verifies_exe_icon():
 
 
 def test_version_still_1_0_9():
-    assert '"1.0.12"' in _iss()
+    assert '"1.0.13"' in _iss()
 
 
 def test_installer_adds_windows_firewall_rule():

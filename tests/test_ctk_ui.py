@@ -46,7 +46,7 @@ def test_ui_entry_points_and_helpers():
     assert callable(ui_module.run)
     assert callable(ui_module.format_update_status)
     assert callable(ui_module.scale_coords)
-    assert VERSION == "1.0.12"
+    assert VERSION == "1.0.13"
 
 
 def test_theme_tokens_real_card_separation():

@@ -40,6 +40,22 @@ def test_build_yml_has_installed_exe_smoke_test():
         or "installed RemoteDesk.exe --version" in BUILD_YML
 
 
+def test_installed_exe_smoke_uses_start_process_wait():
+    # v1.0.13: the v1.0.12 installer smoke step failed on a SCRIPT bug
+    # — `& $installer.FullName ...` + $LASTEXITCODE came back blank.
+    # The installed-EXE step must use the same reliable pattern as the
+    # passing built-EXE step: Start-Process -Wait -PassThru + ExitCode.
+    assert "$LASTEXITCODE -ne 0" not in BUILD_YML, \
+        "$LASTEXITCODE check is unreliable here — use Start-Process ExitCode"
+    assert "exited $LASTEXITCODE" not in BUILD_YML
+    installed = BUILD_YML.split("Smoke-test installed EXE", 1)[1]
+    assert "Start-Process -FilePath $installer.FullName" in installed
+    assert "-PassThru -NoNewWindow -Wait" in installed
+    assert "$inst.ExitCode" in installed
+    assert "installer not found in release/" in installed
+    assert "Start-Process -FilePath $installed" in installed
+
+
 def test_smoke_tests_run_before_release():
     release_pos = BUILD_YML.find("Create GitHub Release")
     assert release_pos > 0
