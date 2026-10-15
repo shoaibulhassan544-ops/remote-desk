@@ -50,6 +50,10 @@ CHANGELOG = {
                "• FIXED: “What’s new” no longer shows a GitHub compare link\n  — only the real changelog is shown.\n"
                "• NEW: installer now shows a license agreement (EULA).\n"
                "• Upgrade no longer needs an uninstall first — same install\n  folder every version, app exits before the installer runs.",
+    "v1.0.10": "• FIXED: Home tab alignment — equal-height top cards, level\n  Device ID + Copy row, breathing room at card bottoms.\n"
+               "• FIXED: lag — tab switches no longer rebuild lists (only\n  the shown page refreshes, and only when data changed).\n"
+               "• FIXED: scrolling is smooth — no per-notch re-layout,\n  viewer frames capped at ~15 fps with identical-frame skip.\n"
+               "• Sidebar: Idle pill + Light/Dark toggle now share the\n  exact width/padding of the nav buttons; Settings rows aligned\n  into one label column + one control column.",
 }
 
 GENERIC_CHANGELOG = "Is version me stability + bug fixes."

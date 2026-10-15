@@ -146,8 +146,22 @@ class _CTkList(ctk.CTkScrollableFrame):
         self._selected: int | None = None
         self._callback = None
         self._fg = kwargs.get("fg_color", "#0B1220")
+        # v1.0.10: batch mode — bulk insert/delete (list rebuilds) must not
+        # reconfigure every row after every single row (O(n^2) configures).
+        self._batch_depth = 0
+
+    def begin_batch(self):
+        """Suppress per-row refresh until end_batch() (one refresh total)."""
+        self._batch_depth += 1
+
+    def end_batch(self):
+        self._batch_depth = max(0, self._batch_depth - 1)
+        if self._batch_depth == 0:
+            self._refresh()
 
     def _refresh(self):
+        if self._batch_depth > 0:
+            return
         for i, (btn, _text) in enumerate(self._rows):
             if i == self._selected:
                 btn.configure(fg_color="#2E7DFF", text_color="#FFFFFF")
@@ -246,6 +260,20 @@ class RemoteDeskApp:
         self._last_frame_size: tuple[int, int] | None = None
         self._host_screen_size: tuple[int, int] = (0, 0)
         self._got_first_frame = False
+        # v1.0.10 perf caches: refresh helpers skip no-op work when nothing
+        # changed (no reconfigure / no list rebuild on identical state).
+        self._pill_state = None
+        self._home_status_text = None
+        self._nav_page = None
+        self._vis_state: dict[int, bool] = {}
+        self._history_row_values = None
+        self._home_history_text = None
+        self._ft_dest_values = None
+        self._last_frame_jpeg = None
+        self._last_drawn_at = 0.0
+        self._viewer_image_id = None
+        self._last_quality_at = 0.0
+        self._last_quality_size = None
         # Shared state vars.
         self.conn_type_var = tk.StringVar(
             value=self.settings.get("connection_type", "lan"))
@@ -272,7 +300,9 @@ class RemoteDeskApp:
         self.conn_type_var.trace_add("write", self._on_conn_type_change)
         self.root.after(200, self._pump_queue)
         if self.settings.get("auto_update_check", True):
-            threading.Thread(target=self._background_update_check, daemon=True).start()
+            # v1.0.10: defer the network update check until after first paint.
+            self.root.after(500, lambda: threading.Thread(
+                target=self._background_update_check, daemon=True).start())
 
     # ------------------------------------------------------------- theming
     def _role(self, widget, role: str):
@@ -366,6 +396,11 @@ class RemoteDeskApp:
         except Exception:
             pass
         _apply(self.root)
+        # v1.0.10: theme changed → cached nav/pill colors are stale; force
+        # one re-skin even though the current page did not change.
+        self._nav_page = None
+        self._pill_state = None
+        self._home_status_text = None
         if hasattr(self, "theme_btn"):
             self.theme_btn.configure(
                 text="☀  Light mode" if self.theme is BLUE_DARK else "🌙  Dark mode")
@@ -376,6 +411,11 @@ class RemoteDeskApp:
         self._refresh_pill()
 
     def _refresh_nav(self):
+        # v1.0.10: skip when the page did not change — reconfiguring all nav
+        # buttons on every call is wasted redraw work.
+        if self._nav_page == self._current_page:
+            return
+        self._nav_page = self._current_page
         t = self.theme
         for name, btn in self._nav_btns.items():
             if name == self._current_page:
@@ -392,18 +432,30 @@ class RemoteDeskApp:
         hosting = self.host is not None
         connected = bool(getattr(self.client, "connected", False))
         session_active = bool(self.host and self.host.sessions.active)
+        status_text = (self.connect_status_var.get() or "").lower()
+        # v1.0.10: colored dot states — green = Idle/Connected,
+        # amber = Connecting, red = Error. One configure per state change.
         if connected or session_active:
-            self.status_pill.configure(text="●  Connected", fg_color=t["success"],
-                                       text_color="#FFFFFF")
-            self.home_status_var.set("Connected")
+            state = ("●  Connected", t["success"], "#FFFFFF", "Connected")
+        elif "connecting" in status_text or "scanning" in status_text:
+            state = ("●  Connecting", "#F59E0B", "#FFFFFF",
+                     "Connecting…")
+        elif "fail" in status_text or "error" in status_text \
+                or "declined" in status_text or "denied" in status_text:
+            state = ("●  Error", t["danger"], "#FFFFFF", "Error — see status")
         elif hosting:
-            self.status_pill.configure(text="●  Hosting ON", fg_color=t["accent"],
-                                       text_color=t["accent_fg"])
-            self.home_status_var.set("Hosting ON — waiting for connections")
+            state = ("●  Hosting ON", t["accent"], t["accent_fg"],
+                     "Hosting ON — waiting for connections")
         else:
-            self.status_pill.configure(text="○  Idle", fg_color=t["border"],
-                                       text_color=t["fg"])
-            self.home_status_var.set("Idle")
+            state = ("●  Idle", t["border"], "#22C55E", "Idle")
+        if self._pill_state == state:
+            return
+        self._pill_state = state
+        text, fg, txt, home_text = state
+        self.status_pill.configure(text=text, fg_color=fg, text_color=txt)
+        if self._home_status_text != home_text:
+            self._home_status_text = home_text
+            self.home_status_var.set(home_text)
 
     def _asset_path(self, name: str) -> str:
         if getattr(sys, "frozen", False):
@@ -475,24 +527,28 @@ class RemoteDeskApp:
         for label, name in nav_items:
             btn = ctk.CTkButton(sidebar, text=label, anchor="w",
                                 font=_font(12), corner_radius=10,
-                                height=38, fg_color="transparent",
+                                height=40, fg_color="transparent",
                                 text_color=t["sidebar_fg"], hover_color=t["border"],
                                 command=lambda n=name: self._show_page(n))
             self._role(btn, "nav")
             btn.pack(fill="x", padx=10, pady=3)
             self._nav_btns[name] = btn
         side_bottom = self._role(ctk.CTkFrame(sidebar, fg_color="transparent"), "sidebar")
-        side_bottom.pack(side="bottom", fill="x", padx=16, pady=16)
-        self.status_pill = ctk.CTkLabel(side_bottom, text="○  Idle",
+        # v1.0.10: same horizontal padding as the nav buttons (padx=10) so
+        # the pill, the theme toggle and every nav button share ONE left
+        # edge and ONE right edge — no element sticks out or looks squeezed.
+        side_bottom.pack(side="bottom", fill="x", padx=10, pady=16)
+        self.status_pill = ctk.CTkLabel(side_bottom, text="●  Idle",
                                         font=_font(11, True), corner_radius=10,
-                                        fg_color=t["border"], text_color=t["fg"])
-        self.status_pill.pack(anchor="w", pady=(0, 10), ipadx=10, ipady=4)
+                                        fg_color=t["border"], text_color="#22C55E",
+                                        anchor="center")
+        self.status_pill.pack(fill="x", pady=(0, 10), ipadx=10, ipady=4)
         self.theme_btn = ctk.CTkButton(side_bottom, text="", command=self._toggle_theme,
-                                       font=_font(11), corner_radius=10,
+                                       font=_font(11), corner_radius=10, anchor="center",
                                        fg_color=t["card"], hover_color=t["border"],
                                        text_color=t["fg"])
         self._role(self.theme_btn, "ghost_btn")
-        self.theme_btn.pack(anchor="w", fill="x")
+        self.theme_btn.pack(fill="x")
         foot = self._role(ctk.CTkLabel(side_bottom, text=config.DEVELOPER_CREDIT,
                                        font=_font(9), text_color=t["muted"]), "muted_sidebar")
         foot.pack(anchor="w", pady=(10, 0))
@@ -519,11 +575,32 @@ class RemoteDeskApp:
         self._refresh_home_history()
         self._refresh_received_files()
 
+    def _set_visible(self, frame, show: bool, **pack_kwargs):
+        """pack/pack_forget only when visibility actually changes.
+
+        v1.0.10: unconditional pack/pack_forget on every tab switch forced
+        a full re-layout of the page each time — a real source of the
+        switch lag. No-op when already in the right state.
+        """
+        if frame is None:
+            return
+        key = id(frame)
+        if self._vis_state.get(key) == show:
+            return
+        self._vis_state[key] = show
+        if show:
+            frame.pack(fill="x", pady=(8, 0), **pack_kwargs)
+        else:
+            frame.pack_forget()
+
     def _show_page(self, name: str):
         self._current_page = name
         for n, page in self.pages.items():
             page.pack_forget()
         self.pages[name].pack(fill="both", expand=True, padx=20, pady=16)
+        # v1.0.10: refresh ONLY the page being shown. The old code rebuilt
+        # trusted/history/file lists on EVERY tab switch (disk reads +
+        # destroy/recreate of every row) — the main new-tab lag.
         if name == "Trusted Devices":
             self._refresh_trusted()
         if name == "Session History":
@@ -557,6 +634,23 @@ class RemoteDeskApp:
         body.pack(fill="x", padx=18, pady=(0, 16))
         return body
 
+    def _settings_row(self, parent, label_text: str):
+        """One aligned settings row: label left, controls right (one column).
+
+        v1.0.10: Settings rows used ad-hoc pack(side=left) chains, so labels
+        and controls landed at ragged x positions. Grid keeps every label
+        on one left edge and every control group on one right edge.
+        Returns the control frame (pack controls inside it, side=left).
+        """
+        row = self._role(ctk.CTkFrame(parent, fg_color="transparent"), "card")
+        row.pack(fill="x", pady=(8, 0))
+        row.columnconfigure(0, weight=1)
+        row.columnconfigure(1, weight=0)
+        self._lbl(row, label_text).grid(row=0, column=0, sticky="w")
+        controls = self._role(ctk.CTkFrame(row, fg_color="transparent"), "card")
+        controls.grid(row=0, column=1, sticky="e")
+        return controls
+
     def _lbl(self, parent, text, muted=False, bold=False, size=11, wrap=None):
         t = self.theme
         lbl = self._role(ctk.CTkLabel(parent, text=text,
@@ -565,7 +659,7 @@ class RemoteDeskApp:
                                       wraplength=wrap or 0, justify="left"), "muted_card" if muted else "label_card")
         return lbl
 
-    def _btn(self, parent, text, command, style="primary"):
+    def _btn(self, parent, text, command, style="primary", height=34):
         t = self.theme
         colors = {
             "primary": (t["accent"], t["accent_hover"], t["accent_fg"]),
@@ -579,7 +673,7 @@ class RemoteDeskApp:
         btn = self._role(ctk.CTkButton(parent, text=text, command=command,
                                        font=_font(11, True), corner_radius=10,
                                        fg_color=fg, hover_color=hover, text_color=txt,
-                                       height=34), role)
+                                       height=height), role)
         return btn
 
     def _entry(self, parent, width=320, show=None, textvariable=None, placeholder=None):
@@ -647,9 +741,7 @@ class RemoteDeskApp:
     CONN_TYPE_VALUES = ["lan", "internet", "signaling"]
 
     def _conn_type_combo(self, parent):
-        row = self._role(ctk.CTkFrame(parent, fg_color="transparent"), "card")
-        row.pack(fill="x", pady=(0, 6))
-        self._lbl(row, "Connection type:").pack(side="left")
+        controls = self._settings_row(parent, "Connection type:")
         self.conn_type_label_var = tk.StringVar(
             value=self.CONN_TYPE_LABELS.get(self.conn_type_var.get(), "Direct (LAN / Same Network)"))
 
@@ -660,10 +752,10 @@ class RemoteDeskApp:
                     self.conn_type_var.set(value)
                     break
 
-        combo = self._combo(row, [self.CONN_TYPE_LABELS[v] for v in self.CONN_TYPE_VALUES],
+        combo = self._combo(controls, [self.CONN_TYPE_LABELS[v] for v in self.CONN_TYPE_VALUES],
                             variable=self.conn_type_label_var, command=_on_select, width=380)
-        combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
-        return row
+        combo.pack(side="left")
+        return controls
 
     def _conn_type_radios(self, parent):
         return self._conn_type_combo(parent)
@@ -724,6 +816,10 @@ class RemoteDeskApp:
     def _build_home(self):
         page = self.pages["Home"]
         body = self._scrollable(page)
+        # v1.0.10: keep a direct handle to the Home scroll frame (its
+        # CTkScrollableFrame object lives inside a canvas window, so it
+        # is not reachable via winfo_children).
+        self.home_scroll = body
         self._lbl(body, "Welcome Back!", bold=True, size=26).pack(anchor="w")
         self._lbl(body, "Ready to connect or host a remote session — securely.",
                   muted=True, size=12).pack(anchor="w", pady=(0, 16))
@@ -732,6 +828,10 @@ class RemoteDeskApp:
         top.pack(fill="x")
         top.columnconfigure(0, weight=1)
         top.columnconfigure(1, weight=1)
+        # v1.0.10: row weight 1 + sticky nsew on both cards → equal heights;
+        # the HOST card gets the same row structure as the ADDRESS card so
+        # neither card ends with a big unbalanced empty bottom.
+        top.rowconfigure(0, weight=1)
         id_card = self._role(ctk.CTkFrame(top, fg_color=self.theme["card"], corner_radius=14,
                                           border_width=1, border_color=self.theme["border"]), "card")
         id_card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
@@ -745,7 +845,10 @@ class RemoteDeskApp:
         self._role(ctk.CTkLabel(id_row, text=format_device_id(self.device_id),
                                 font=_font(32, True),
                                 text_color=self.theme["fg"]), "label_card").pack(side="left")
-        self._btn(id_row, "Copy", self._copy_device_id, "ghost").pack(side="left", padx=12)
+        # v1.0.10: Copy button height matches the big Device ID text height
+        # so the row baseline sits level instead of floating high.
+        self._btn(id_row, "Copy", self._copy_device_id, "ghost",
+                  height=36).pack(side="left", padx=12)
         self._lbl(inner, f"Device: {self.device_name}", muted=True).pack(anchor="w")
         os_label = f"{platform.system()} {platform.release()}"
         self._lbl(inner, f"OS: {os_label}", muted=True).pack(anchor="w")
@@ -779,6 +882,19 @@ class RemoteDeskApp:
                   "ke connect karega — tumhare paas Accept / Decline ka popup "
                   "aayega. Koi code nahi chahiye.",
                   muted=True, wrap=320).pack(anchor="w", pady=(8, 0))
+        # v1.0.10: mirror the ADDRESS card's info rows (Status / Port) so
+        # both top cards share the same vertical rhythm and bottom edge.
+        host_status_row = self._role(ctk.CTkFrame(hinner, fg_color="transparent"), "card")
+        host_status_row.pack(fill="x", pady=(8, 0))
+        self._lbl(host_status_row, "Status:", muted=True).pack(side="left")
+        self._role(ctk.CTkLabel(host_status_row, textvariable=self.home_status_var,
+                                font=_font(11, True),
+                                text_color=self.theme["fg"]), "label_card").pack(side="left", padx=6)
+        host_port_row = self._role(ctk.CTkFrame(hinner, fg_color="transparent"), "card")
+        host_port_row.pack(fill="x", pady=(4, 0))
+        self._lbl(host_port_row,
+                  f"Port: {self.settings.get('port', config.DEFAULT_PORT)}",
+                  muted=True, size=10).pack(side="left")
 
         card = self._card(body, "Connect to a remote device")
         self._lbl(card, "Remote Address", bold=True).pack(anchor="w")
@@ -805,17 +921,19 @@ class RemoteDeskApp:
         self._btn(row2, "Find on LAN", self._find_on_lan_home, "ghost").pack(side="left", padx=6)
         self._lbl(card, "1) Dusre PC pe Start Hosting dabao, uska Address lo. "
                   "2) Yahan Address likh ke Connect dabao — dusre PC pe Accept ka popup aayega.",
-                  muted=True, wrap=640).pack(anchor="w", pady=(8, 0))
+                  muted=True, wrap=640).pack(anchor="w", pady=(10, 2))
         self._role(ctk.CTkLabel(card, textvariable=self.connect_status_var,
                                 font=_font(11), text_color=self.theme["muted"],
                                 wraplength=640, justify="left"), "muted_card").pack(
-                                    anchor="w", pady=(6, 0))
+                                    anchor="w", pady=(4, 4))
 
         self.home_internet = self._internet_block(body)
         self.home_signaling = self._signaling_block(body)
 
         card2 = self._card(body, "Recent sessions")
-        self.home_history_box = self._role(ctk.CTkTextbox(card2, height=110,
+        # v1.0.10: shorter log boxes — Home stays compact so the primary
+        # Address/Host/Connect cards fit the first screen at 1000x680.
+        self.home_history_box = self._role(ctk.CTkTextbox(card2, height=72,
                                                           font=ctk.CTkFont(family="Consolas", size=11),
                                                           fg_color=self.theme["entry"],
                                                           border_color=self.theme["border"],
@@ -834,7 +952,7 @@ class RemoteDeskApp:
                   "ghost").pack(side="left", padx=6)
 
         card4 = self._card(body, "Activity log")
-        self.log_box = self._role(ctk.CTkTextbox(card4, height=130,
+        self.log_box = self._role(ctk.CTkTextbox(card4, height=88,
                                                  font=ctk.CTkFont(family="Consolas", size=11),
                                                  fg_color=self.theme["entry"],
                                                  border_color=self.theme["border"],
@@ -1126,22 +1244,27 @@ class RemoteDeskApp:
     def _refresh_received_files(self):
         if not hasattr(self, "recv_list"):
             return
-        self.recv_list.delete(0, "end")
-        folder = self.settings.get("download_dir", config.default_download_dir())
+        # v1.0.10: batch the bulk insert so rows refresh once, not per row.
+        self.recv_list.begin_batch()
         try:
-            entries = sorted(os.listdir(folder)) if os.path.isdir(folder) else []
-        except OSError:
-            entries = []
-        if not entries:
-            self.recv_list.insert("end", "(Empty — no received files in this folder.)")
-            return
-        for name in entries:
-            path = os.path.join(folder, name)
+            self.recv_list.delete(0, "end")
+            folder = self.settings.get("download_dir", config.default_download_dir())
             try:
-                size = os.path.getsize(path)
+                entries = sorted(os.listdir(folder)) if os.path.isdir(folder) else []
             except OSError:
-                size = 0
-            self.recv_list.insert("end", f"{name} — {size:,} bytes")
+                entries = []
+            if not entries:
+                self.recv_list.insert("end", "(Empty — no received files in this folder.)")
+                return
+            for name in entries:
+                path = os.path.join(folder, name)
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = 0
+                self.recv_list.insert("end", f"{name} — {size:,} bytes")
+        finally:
+            self.recv_list.end_batch()
 
     def _refresh_file_dest(self):
         if not hasattr(self, "ft_dest"):
@@ -1152,6 +1275,10 @@ class RemoteDeskApp:
             if isinstance(entry, dict) and entry.get("device_name"):
                 if entry["device_name"] not in names:
                     names.append(entry["device_name"])
+        # v1.0.10: skip the combo reconfigure when the value list is identical.
+        if self._ft_dest_values == names:
+            return
+        self._ft_dest_values = names
         self.ft_dest.configure(values=names or ["(No saved devices yet)"])
         if names:
             self.ft_dest.set(names[0])
@@ -1325,13 +1452,11 @@ class RemoteDeskApp:
         self._lbl(card, "Change the unattended access password. Stored as a "
                   "salted hash only — never in plain text.", muted=True,
                   wrap=640).pack(anchor="w")
-        row = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
-        row.pack(fill="x", pady=(10, 0))
-        self._lbl(row, "New password (min 10 chars):").pack(side="left")
+        row = self._settings_row(card, "New password (min 10 chars):")
         self.sec_pw = self._entry(row, width=260, show="•")
-        self.sec_pw.pack(side="left", padx=6)
+        self.sec_pw.pack(side="left", padx=(0, 6))
         self._btn(row, "Change Access Password", self._change_access_password,
-                  "primary").pack(side="left", padx=6)
+                  "primary").pack(side="left")
         card2 = self._card(body, "Two-factor authentication")
         self.tfa_var = tk.BooleanVar(value=False)
         self._check(card2, "Enable two-factor authentication",
@@ -1368,13 +1493,11 @@ class RemoteDeskApp:
         body = self._scrollable(tab)
         card = self._card(body, "Connection defaults")
         self._conn_type_radios(card)
-        row = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
-        row.pack(fill="x")
-        self._lbl(row, "Port:").pack(side="left")
+        row = self._settings_row(card, "Port:")
         self.net_port = self._entry(row, width=120)
-        self.net_port.pack(side="left", padx=6)
+        self.net_port.pack(side="left", padx=(0, 6))
         self.net_port.insert(0, str(self.settings.get("port", config.DEFAULT_PORT)))
-        self._btn(row, "Save network settings", self._save_network, "primary").pack(side="left", padx=6)
+        self._btn(row, "Save network settings", self._save_network, "primary").pack(side="left")
         card2 = self._card(body, "Internet (direct) status")
         self._lbl(card2, "Public IP:", muted=True).pack(anchor="w")
         self._role(ctk.CTkLabel(card2, textvariable=self.public_ip_var,
@@ -1440,12 +1563,10 @@ class RemoteDeskApp:
         tab = self.settings_tabs["General"]
         body = self._scrollable(tab)
         card = self._card(body, "General")
-        row = self._role(ctk.CTkFrame(card, fg_color="transparent"), "card")
-        row.pack(fill="x")
-        self._lbl(row, "Download folder for received files:").pack(side="left")
+        row = self._settings_row(card, "Download folder for received files:")
         self.download_dir_var = tk.StringVar(value=self.settings.get("download_dir", ""))
         dl = self._entry(row, width=340, textvariable=self.download_dir_var)
-        dl.pack(side="left", padx=6)
+        dl.pack(side="left", padx=(0, 6))
         self._btn(row, "Browse…", self._pick_download_dir, "ghost").pack(side="left")
         self.auto_update_var = tk.BooleanVar(value=bool(self.settings.get("auto_update_check", True)))
         self._check(card, "Check for updates automatically",
@@ -1548,23 +1669,13 @@ class RemoteDeskApp:
         show = self.conn_type_var.get() == "internet"
         for frame in (getattr(self, "home_internet", None),
                       getattr(self, "rc_internet", None)):
-            if frame is None:
-                continue
-            if show:
-                frame.pack(fill="x", pady=(8, 0))
-            else:
-                frame.pack_forget()
+            self._set_visible(frame, show)
 
     def _refresh_signaling_blocks(self):
         show = self.conn_type_var.get() == "signaling"
         for frame in (getattr(self, "home_signaling", None),
                       getattr(self, "rc_signaling", None)):
-            if frame is None:
-                continue
-            if show:
-                frame.pack(fill="x", pady=(8, 0))
-            else:
-                frame.pack_forget()
+            self._set_visible(frame, show)
 
     def _update_signaling_status(self):
         url = (self.settings.get("signaling_url", "") or "").strip()
@@ -2089,25 +2200,44 @@ class RemoteDeskApp:
             pass
 
     def _on_frame(self, jpeg: bytes):
+        # v1.0.10: the old code decoded + redrew EVERY incoming frame
+        # (canvas.delete("all") + new PhotoImage) at full host rate — a
+        # real lag source during sessions. Now: max ~15 fps, skip
+        # byte-identical frames, reuse one canvas image item, and update
+        # the quality label at most twice per second.
         try:
+            now = time.time()
+            if jpeg == self._last_frame_jpeg and self._viewer_image_id is not None:
+                return
+            if now - self._last_drawn_at < (1.0 / 15.0) and self._viewer_image_id is not None:
+                return
             from PIL import Image, ImageTk
             img = Image.open(io.BytesIO(jpeg))
-            now = time.time()
             self._frame_times.append(now)
             self._last_frame_size = img.size
             if getattr(self.client, "host_screen_size", (0, 0)) != (0, 0):
                 self._host_screen_size = self.client.host_screen_size
-            if len(self._frame_times) >= 2:
+            if len(self._frame_times) >= 2 and (
+                    now - self._last_quality_at >= 0.5
+                    or self._last_quality_size != img.size):
                 span = self._frame_times[-1] - self._frame_times[0]
                 fps = (len(self._frame_times) - 1) / span if span > 0 else 0.0
                 w, h = img.size
                 self.viewer_quality_var.set(f"Quality: {w}×{h} • {fps:.0f} fps")
+                self._last_quality_at = now
+                self._last_quality_size = img.size
             w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
             if w > 10 and h > 10:
                 img.thumbnail((w, h))
             self.viewer_photo = ImageTk.PhotoImage(img)
-            self.canvas.delete("all")
-            self.canvas.create_image(w // 2, h // 2, image=self.viewer_photo, anchor="center")
+            if self._viewer_image_id is None:
+                self._viewer_image_id = self.canvas.create_image(
+                    w // 2, h // 2, image=self.viewer_photo, anchor="center")
+            else:
+                self.canvas.coords(self._viewer_image_id, w // 2, h // 2)
+                self.canvas.itemconfig(self._viewer_image_id, image=self.viewer_photo)
+            self._last_frame_jpeg = jpeg
+            self._last_drawn_at = now
             if not self._got_first_frame:
                 self._got_first_frame = True
                 try:
@@ -2175,19 +2305,27 @@ class RemoteDeskApp:
                 "end", f"{info.get('device_name')} (ID {format_device_id(did)}) — {info.get('address')}")
 
     def _refresh_trusted(self):
-        for lst in (getattr(self, "trusted_list", None),
-                    getattr(self, "saved_listbox", None)):
-            if lst is None:
-                continue
-            lst.delete(0, "end")
-            for d in storage.load_trusted():
-                perms = []
-                if d.get("control_allowed"):
-                    perms.append("control")
-                if d.get("files_allowed"):
-                    perms.append("files")
-                perm_txt = f" ({', '.join(perms)})" if perms else " (view only)"
-                lst.insert("end", f"● {d.get('device_name')} — ID {format_device_id(d.get('device_id', ''))}{perm_txt}")
+        lists = [lst for lst in (getattr(self, "trusted_list", None),
+                                 getattr(self, "saved_listbox", None))
+                 if lst is not None]
+        # v1.0.10: batch + rebuild both lists from one storage read.
+        trusted = storage.load_trusted()
+        for lst in lists:
+            lst.begin_batch()
+        try:
+            for lst in lists:
+                lst.delete(0, "end")
+                for d in trusted:
+                    perms = []
+                    if d.get("control_allowed"):
+                        perms.append("control")
+                    if d.get("files_allowed"):
+                        perms.append("files")
+                    perm_txt = f" ({', '.join(perms)})" if perms else " (view only)"
+                    lst.insert("end", f"● {d.get('device_name')} — ID {format_device_id(d.get('device_id', ''))}{perm_txt}")
+        finally:
+            for lst in lists:
+                lst.end_batch()
 
     def _remove_trusted(self):
         sel = self.trusted_list.curselection()
@@ -2205,10 +2343,9 @@ class RemoteDeskApp:
     def _refresh_history(self):
         if not hasattr(self, "history_tree"):
             return
-        for row in self.history_tree.get_children():
-            self.history_tree.delete(row)
         q = self.hist_search_var.get().lower() if hasattr(self, "hist_search_var") else ""
         filt = self.hist_filter_var.get() if hasattr(self, "hist_filter_var") else "All"
+        new_rows = []
         for entry in reversed(storage.load_history()):
             if not isinstance(entry, dict):
                 continue
@@ -2221,9 +2358,17 @@ class RemoteDeskApp:
             date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "—"
             dur = entry.get("duration_s")
             dur_txt = f"{dur:.0f}s" if isinstance(dur, (int, float)) else "—"
-            self.history_tree.insert("", "end", values=(
+            new_rows.append((
                 entry.get("device_name", ""), entry.get("type", ""),
                 dur_txt, entry.get("status", ""), date_str))
+        # v1.0.10: skip the Treeview teardown/rebuild when rows are identical.
+        if self._history_row_values == new_rows:
+            return
+        self._history_row_values = new_rows
+        for row in self.history_tree.get_children():
+            self.history_tree.delete(row)
+        for values in new_rows:
+            self.history_tree.insert("", "end", values=values)
 
     def _refresh_home_history(self):
         if not hasattr(self, "home_history_box"):
@@ -2235,9 +2380,14 @@ class RemoteDeskApp:
             ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(e.get("timestamp", 0))) \
                 if e.get("timestamp") else "—"
             lines.append(f"{ts}  •  {e.get('device_name','')}  •  {e.get('type','')}  •  {e.get('status','')}")
+        text = "\n".join(lines) or "No sessions yet."
+        # v1.0.10: skip the textbox clear/rewrite when the text is identical.
+        if self._home_history_text == text:
+            return
+        self._home_history_text = text
         self.home_history_box.configure(state="normal")
         self.home_history_box.delete("1.0", "end")
-        self.home_history_box.insert("end", "\n".join(lines) or "No sessions yet.")
+        self.home_history_box.insert("end", text)
         self.home_history_box.configure(state="disabled")
 
     # ------------------------------------------------------------- settings actions
