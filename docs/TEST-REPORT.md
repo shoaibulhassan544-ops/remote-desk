@@ -1,4 +1,39 @@
-# TEST REPORT — RemoteDesk v1.0.8 (honest status)
+# TEST REPORT — RemoteDesk v1.0.9 (honest status)
+
+## v1.0.9 addendum (this session) — auto-install + clean "What's new" + installer EULA
+- **AUTO-INSTALL (user screenshot, v1.0.7→v1.0.8 flow):** the old flow
+  showed a manual [Run Installer] button while the app stayed OPEN and
+  locked RemoteDesk.exe, so the install failed. FIX: on download
+  success the popup shows [Install Now] + a 3-second countdown; at 0
+  (or on Install Now) the installer is launched DETACHED
+  (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` on Windows,
+  `start_new_session` on POSIX) and the app closes itself BEFORE the
+  installer replaces files. [Later] cancels the auto-install. The
+  installer is NEVER launched while the app is still running.
+  Proven by `tests/test_auto_install.py` (detached flags, countdown
+  state machine with fakes, Later cancels, no "Run Installer" left).
+- **"What's new" GitHub link (user screenshot):** GitHub auto-appends
+  "**Full Changelog**: <compare URL>" to release notes and the popup
+  showed it. FIX: `sanitize_notes()` in `update_checker.py` drops any
+  line with "Full Changelog" / "/compare/" / "github.com", strips
+  markdown links to plain text, and falls back to the built-in
+  CHANGELOG when nothing readable remains. Proven by
+  `tests/test_whatsnew_sanitize.py`.
+- **INSTALLER EULA:** new `LICENSE.txt` (authorized use only, consent,
+  as-is / no warranty) + `LicenseFile=LICENSE.txt` in `setup.iss`.
+  Proven by `tests/test_license.py`.
+- **IN-PLACE UPGRADE (no uninstall first):** verified
+  `DefaultDirName={autopf}\RemoteDesk` + `PrivilegesRequired=lowest`
+  are UNCHANGED since v1.0.5, so every version installs to the SAME
+  folder; the past upgrade failures were the running app locking the
+  EXE, fixed by the auto-install exit + the ssInstall taskkill backup.
+  New TROUBLESHOOTING entry covers it.
+- **Tests this session:** `python3 -m pytest -q` → **128 passed,
+  1 skipped** (109 pre-v1.0.9 + 19 new: test_auto_install.py ×8,
+  test_whatsnew_sanitize.py ×8, test_license.py ×2, plus setup.iss
+  license/location guards); `python3 run.py --version` → `1.0.9`;
+  `python3 -m py_compile app/*.py` OK; Xvfb smoke (update popup
+  flow incl. countdown, all pages, no exceptions).
 
 ## v1.0.8 addendum (this session) — CustomTkinter UI rebuild, flows unchanged
 - **WHY:** v1.0.7 changed the FLOW but still LOOKED like old flat

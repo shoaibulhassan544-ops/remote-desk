@@ -1,4 +1,19 @@
-# Troubleshooting — RemoteDesk v1.0.7
+# Troubleshooting — RemoteDesk v1.0.9
+
+## "Upgrade asks to uninstall first / Access denied" (fixed in v1.0.9)
+- ROOT CAUSE (pre-v1.0.9): the update flow showed a manual installer
+  button while the app stayed OPEN, so Windows locked RemoteDesk.exe
+  and the installer could not replace it — the user had to uninstall
+  first. The install folder itself never changed (same folder since
+  v1.0.5); the lock was the whole problem.
+- Fix in v1.0.9: after the update downloads, the popup shows
+  [Install Now] + a 3-second countdown, then the installer launches
+  detached and the app closes itself BEFORE the installer runs —
+  nothing is locked, the upgrade replaces files in place, no
+  uninstall needed. Clicking [Later] cancels the auto-install.
+- If you run the installer MANUALLY while the app is open: close
+  RemoteDesk first (or let the installer's ssInstall taskkill close
+  it), then run the installer — still no uninstall needed.
 
 ## "Address pe connect nahi ho raha, IP pe ho raha hai" (fixed in v1.0.7)
 - ROOT CAUSE (pre-v1.0.7): the host never broadcast its presence
