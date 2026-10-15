@@ -8,6 +8,39 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 > control / file-transfer permissions are granted separately. Unattended
 > access is opt-in, password-protected, and revocable.
 
+## What it does (v1.0.11 — Connect actually works: discovery + firewall + diagnostics)
+
+- **LAN DISCOVERY FIXED:** the host now broadcasts presence to the
+  subnet-directed broadcast (e.g. `192.168.1.255`) FIRST, then the
+  limited broadcast (`255.255.255.255`), then loopback — Windows /
+  home routers drop the limited broadcast too often for it to be the
+  only target. The listener binds `0.0.0.0` (all interfaces). Device
+  ID (Address) connect on the same Wi-Fi now resolves reliably.
+- **WINDOWS FIREWALL FIXED:** Defender Firewall silently drops inbound
+  TCP (host port) + UDP (discovery) with no rule — the most likely
+  cause of "IP connect bhi fail". The installer now adds an Allow rule
+  for RemoteDesk (best-effort, never fails the install), and
+  Settings → Network has a one-click "Windows Firewall me Allow karo"
+  button (UAC prompt when admin is needed).
+- **CONNECTION TEST (new):** a button next to Connect on Home +
+  Remote Control runs 4 steps — Address resolve → TCP connect → TLS
+  handshake → Host jawab — each PASS/FAIL in plain words, in a
+  thread (never freezes the UI). If all pass, Connect dabao — host pe
+  Accept popup aayega.
+- **REAL CONNECT ERRORS:** refused → "Start Hosting ON karo + Firewall
+  me Allow karo"; timeout → "IP sahi hai? Same Wi-Fi? Firewall?";
+  TLS fail → "dono PC pe same version hai?" — never a bare exception.
+- **CHECKLIST, NOT A DEAD END:** Device-ID-not-found now shows
+  1) Hosting ON? 2) Same Wi-Fi? 3) Firewall Allow? 4) Find on LAN.
+- **HOSTING VISIBILITY:** Home shows "Hosting ON — Port X — LAN IP Y
+  — is Address pe dusra PC connect kar sakta hai". If hosting cannot
+  start (port busy / firewall), the exact error is shown — the app
+  never pretends hosting works.
+- **BUILD FIX:** v1.0.10's release never shipped (2 test failures on
+  the Windows runner — scroll test used a Linux-only wheel event;
+  list batch mode reconfigured rows per insert). Both fixed in
+  v1.0.11; v1.0.10 is NOT shippable (no assets). Ship only v1.0.11+.
+
 ## What it does (v1.0.10 — Home alignment + lag/smoothness fixes)
 
 - **Home alignment:** the two top cards now have equal heights and the
@@ -33,7 +66,7 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 - **DLL-LOAD HARDENING + CI SMOKE TEST:** the portable EXE is now
   smoke-tested on a real Windows runner (built EXE `--version` +
   silent-install + installed EXE `--version`) BEFORE any release
-  ships; UPX disabled; no VC++ runtime DLLs excluded. Ship only v1.0.10+.
+  ships; UPX disabled; no VC++ runtime DLLs excluded. Ship only v1.0.11+.
 
 ## What it does (v1.0.9 — auto-install + clean "What's new" + installer EULA)
 
@@ -48,7 +81,7 @@ Temporary product name (rebrandable). Developed by Shoaib Azeez.
 - **Installer EULA:** the installer now shows the RemoteDesk license
   agreement (LICENSE.txt) before installing.
 - **In-place upgrade:** install folder + privilege level unchanged
-  since v1.0.5, so every version upgrades in place. Ship only v1.0.10+.
+  since v1.0.5, so every version upgrades in place. Ship only v1.0.11+.
 
 ## What it does (v1.0.8 — CustomTkinter UI rebuild: the UI finally LOOKS modern)
 
@@ -68,7 +101,7 @@ auto-accept. Unattended (password, opt-in) is the only no-Accept
 path. All v1.0.7 logic reused from `app/*` — protocol/security
 untouched. Justified non-CTk pieces: `tk.Canvas` (viewer drawing
 surface), `ttk.Treeview` (history table), tkinter file/message
-dialogs. Ship only v1.0.10+ (v1.0.8/v1.0.9 superseded by v1.0.10).
+dialogs. Ship only v1.0.11+ (v1.0.8/v1.0.9/v1.0.10 superseded by v1.0.11).
 
 ## What it does (v1.0.7 — 3 real bug fixes + fresh UI rebuild)
 

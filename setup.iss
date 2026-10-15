@@ -4,7 +4,7 @@
 ; Version is read from the app at build time — update app/version.py, then rebuild.
 
 #define MyAppName "RemoteDesk"
-#define MyAppVersion "1.0.10"
+#define MyAppVersion "1.0.11"
 #define MyAppPublisher "Shoaib Azeez"
 #define MyAppExeName "RemoteDesk.exe"
 
@@ -90,4 +90,13 @@ begin
 end;
 
 [Run]
+; v1.0.11 — WINDOWS FIREWALL: Defender Firewall silently drops inbound
+; TCP (host port) + inbound UDP (discovery) when no rule exists — the
+; most likely cause of "IP connect bhi fail" on a fresh install. Add an
+; Allow rule for the installed EXE, best-effort: runhidden (no window),
+; unchecked (no finish-page checkbox — no Description is given, so it
+; just runs). If the install is non-admin, netsh fails silently and the
+; user can add the rule from Settings → Network → Windows Firewall
+; (with a UAC prompt). A failed rule never fails the install.
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""RemoteDesk"" dir=in action=allow program=""{app}\RemoteDesk.exe"" enable=yes"; Flags: runhidden unchecked
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
