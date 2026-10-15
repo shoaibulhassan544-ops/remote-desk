@@ -54,6 +54,25 @@ def _widget_count(root):
     return count
 
 
+def _scroll_down_one_notch(canvas):
+    """Generate ONE wheel notch, using the platform's real wheel event.
+
+    v1.0.11: the old test always sent Linux-only ``<Button-5>``. On
+    Windows, Tk/CTk scroll on ``<MouseWheel>`` with a delta — Button-5
+    does nothing there, so the view never moved and the test failed on
+    the Windows runner (not a product bug: the app scrolls fine on
+    Windows; the test was speaking the wrong platform's event).
+    """
+    if sys.platform == "win32":
+        # Negative delta = scroll down (content moves up).
+        canvas.event_generate("<MouseWheel>", delta=-120)
+    elif sys.platform == "darwin":
+        canvas.event_generate("<MouseWheel>", delta=-1)
+    else:
+        # X11: Button-5 = wheel down.
+        canvas.event_generate("<Button-5>")
+
+
 def test_scroll_moves_one_equal_step_per_event_and_no_rebuild(app):
     app._show_page("Home")
     # Map the window at real size: a withdrawn window never gets real
@@ -70,12 +89,11 @@ def test_scroll_moves_one_equal_step_per_event_and_no_rebuild(app):
     before = _widget_count(app.root)
     positions = [canvas.yview()[0]]
     for _ in range(3):
-        # Linux wheel: Button-5 = wheel down (scroll content upward).
         # NOTE: update() (not update_idletasks()) — wheel events sit in
         # the event queue and only update() processes them.
-        # NOTE: Button-4 (wheel up) at the top cannot move anything, so
-        # the test must scroll DOWN from the top.
-        canvas.event_generate("<Button-5>")
+        # NOTE: scrolling UP at the top cannot move anything, so the test
+        # must scroll DOWN from the top.
+        _scroll_down_one_notch(canvas)
         app.root.update()
         positions.append(canvas.yview()[0])
     steps = [round(b - a, 6) for a, b in zip(positions, positions[1:])]

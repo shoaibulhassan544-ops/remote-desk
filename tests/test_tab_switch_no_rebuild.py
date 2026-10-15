@@ -82,14 +82,20 @@ def test_history_refresh_is_noop_when_unchanged(app):
 
 def test_ctk_list_batches_bulk_refresh(app):
     lst = ui_module._CTkList(app.root, height=80)
-    # Count CTkButton.configure calls during the batch: each insert must
-    # configure its own row once (command), and the per-row full refresh
-    # (2 configures per row, O(n^2)) must NOT run until end_batch.
+    # Count ONLY refresh configures (fg_color/text_color) — those are
+    # the per-row full-refresh configures batch mode must suppress.
+    # Counting ALL configure calls is platform-fragile: CTk itself
+    # makes internal configure calls during button construction/mapping
+    # that differ between Linux and Windows (the v1.0.10 Windows run
+    # counted 10 for 5 inserts for that reason alone). The app's own
+    # guarantee is: zero refresh configures during a batch, exactly
+    # one refresh configure per row at end_batch.
     calls = []
     orig_configure = ctk.CTkButton.configure
 
     def counting(self, *a, **k):
-        calls.append(1)
+        if "fg_color" in k or "text_color" in k:
+            calls.append(1)
         return orig_configure(self, *a, **k)
 
     ctk.CTkButton.configure = counting
@@ -97,12 +103,12 @@ def test_ctk_list_batches_bulk_refresh(app):
         lst.begin_batch()
         for i in range(5):
             lst.insert("end", f"row {i}")
-        assert len(calls) == 5, (
-            f"batched inserts must configure 5 rows once each, got {len(calls)}")
+        assert len(calls) == 0, (
+            f"batched inserts must do zero refresh configures, got {len(calls)}")
         lst.end_batch()
-        # _refresh is ONE configure call per row (fg_color + text_color).
-        assert len(calls) == 5 + 5, (
-            "end_batch must run exactly one full refresh (1 call/row)")
+        # _refresh is ONE refresh configure call per row.
+        assert len(calls) == 5, (
+            f"end_batch must run exactly one full refresh (1 call/row), got {len(calls)}")
     finally:
         ctk.CTkButton.configure = orig_configure
         lst.destroy()

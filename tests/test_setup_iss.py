@@ -87,7 +87,18 @@ def test_build_workflow_verifies_exe_icon():
 
 
 def test_version_still_1_0_9():
-    assert '"1.0.10"' in _iss()
+    assert '"1.0.11"' in _iss()
+
+
+def test_installer_adds_windows_firewall_rule():
+    """v1.0.11: the installer adds a Windows Firewall Allow rule for the
+    installed EXE (best-effort: runhidden + unchecked, never fails install)."""
+    iss = _iss()
+    run = iss[iss.index("[Run]"):]
+    assert "netsh" in run
+    assert "advfirewall firewall add rule" in run
+    assert "RemoteDesk" in run
+    assert "runhidden" in run
 
 
 def test_license_file_present():
