@@ -86,5 +86,24 @@ def test_build_workflow_verifies_exe_icon():
     assert yml.index("pyinstaller remote_desk.spec") < yml.index("Verify EXE icon")
 
 
-def test_version_still_1_0_8():
-    assert '"1.0.8"' in _iss()
+def test_version_still_1_0_9():
+    assert '"1.0.9"' in _iss()
+
+
+def test_license_file_present():
+    """v1.0.9: the installer shows the EULA (LICENSE.txt) before install."""
+    iss = _iss()
+    assert "LicenseFile=LICENSE.txt" in iss
+    lic = open(os.path.join(ROOT, "LICENSE.txt"), encoding="utf-8").read()
+    assert len(lic.strip()) > 500, "LICENSE.txt must be a real EULA, not a stub"
+    assert "Authorized" in lic or "authorized" in lic
+    assert "AS IS" in lic
+
+
+def test_install_location_unchanged_since_v105():
+    """v1.0.9 in-place upgrade: the install folder + privilege level must
+    NEVER change between versions, or upgrades land in a second copy
+    and the user is forced into an uninstall-first dance."""
+    iss = _iss()
+    assert r"DefaultDirName={autopf}\{#MyAppName}" in iss
+    assert "PrivilegesRequired=lowest" in iss
