@@ -26,7 +26,7 @@ jobs:
         run: python -m pytest -q
       - name: Build EXE (PyInstaller)
         run: pyinstaller remote_desk.spec
-      - name: Smoke-test built EXE (v1.0.10)
+      - name: Smoke-test built EXE (v1.0.12)
         # "Upar test karo": the portable EXE must at least START on a
         # real Windows runner BEFORE any asset ships. --version exits
         # before any GUI/Tk code runs, so this proves the one-file
@@ -54,7 +54,7 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Build installer
         run: iscc setup.iss
-      - name: Smoke-test installed EXE (v1.0.10)
+      - name: Smoke-test installed EXE (v1.0.12)
         # Same guarantee for the installer path: silent-install into
         # a temp dir on the runner, then the INSTALLED EXE must also
         # start (--version, exit 0). Catches installer-packaging
