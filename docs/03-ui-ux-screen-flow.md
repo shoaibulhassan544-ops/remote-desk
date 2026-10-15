@@ -1,4 +1,38 @@
-# UI/UX & Screen Flow — RemoteDesk v1.0.7 (Option 1 AnyDesk Blue, final flow)
+# UI/UX & Screen Flow — RemoteDesk v1.0.8 (Option 1 AnyDesk Blue, final flow)
+
+v1.0.8: `app/ui.py` was DELETED and rewritten FRESH from scratch on
+**CustomTkinter** (same entry points `RemoteDeskApp(root)`, `run()`;
+same handlers, same flows, same attribute names). WHY: v1.0.7 changed
+the FLOW but still LOOKED like old flat tkinter — the user's screenshot
+proved it (flat rectangles, no card contrast, no rounded corners, no
+depth). Root cause: tkinter's native widgets cannot look modern no
+matter the colors. WHAT CHANGED VISUALLY: real rounded cards
+(`CTkFrame`, corner_radius=14, card `#16263F` on bg `#0B1220`, 1px
+border `#22365C` — genuine visual separation), rounded buttons
+(`CTkButton`, corner_radius=10, accent `#2E7DFF` / hover `#1D6FE0`,
+bold) and entries (`CTkEntry`, corner_radius=10, placeholder text),
+`CTkSwitch` toggles, `CTkComboBox` dropdowns, `CTkProgressBar` for
+update/download progress, `CTkScrollableFrame` for history/log,
+`CTkToplevel` dialogs (Accept popup, update popup). Ghost/secondary
+buttons use the border color as fill so they read as real pill buttons
+on cards (a first-pass screenshot showed them invisible as plain text).
+Layout: left sidebar 210px (`#0A0F1E`) with logo mark + nav buttons
+(transparent, active = blue fill); main area 20px padding. Theme toggle
+= `ctk.set_appearance_mode` + per-role re-skin (dark default, light
+mode available). NO flat tkinter `Button`/`Entry`/`LabelFrame` remain
+— enforced by `tests/test_ctk_ui.py`. Justified exceptions (CTk has no
+equivalent): `tk.Canvas` (viewer drawing surface), `ttk.Treeview`
+(history table), tkinter file/message dialogs. WHAT STAYED THE SAME:
+every flow (Home, Remote Control, Viewer + Control indicator, File
+Transfer honest gaps, Trusted, History, Settings tabs), the Accept
+popup (Control defaults ON), the small 520×420 update popup
+(Download/Later only, built-in changelog, live progress), and all
+`app/*` logic (protocol/security untouched). During the port, two real
+API mismatches in the old UI's update path were found and fixed:
+`check_for_update()` takes `current=VERSION` (not `VERSION, repo=…`),
+and the release dict keys are `tag`/`notes`/`url`/`assets` (not
+`latest_version`/`release_notes`/`download_url`); the download now
+uses `download_update()` + `select_setup_asset()`.
 
 v1.0.7: `app/ui.py` was DELETED and rewritten FRESH from scratch in the
 same Option 1 tokens (no leftover v1.0.4/v1.0.5 layout code). Changes vs

@@ -1,3 +1,49 @@
+# TEST REPORT — RemoteDesk v1.0.8 (honest status)
+
+## v1.0.8 addendum (this session) — CustomTkinter UI rebuild, flows unchanged
+- **WHY:** v1.0.7 changed the FLOW but still LOOKED like old flat
+  tkinter (user's screenshot: flat rectangles, no card contrast, no
+  rounded corners, no depth). Root cause: tkinter native widgets cannot
+  look modern no matter the colors. FIX: `app/ui.py` deleted and
+  rewritten FRESH on CustomTkinter (same entry points, same handlers,
+  same attribute names; all `app/*` logic reused, protocol/security
+  untouched). `customtkinter>=5.2.0` added to `requirements.txt`;
+  PyInstaller needs no spec change (CustomTkinter ships its own hooks;
+  spec still parses; `build.yml` already does `pip install -r
+  requirements.txt`).
+- **Verified this session:** `python3 -m pytest -q` → **109 passed,
+  1 skipped** (103 pre-v1.0.8 + 6 new in `tests/test_ctk_ui.py`:
+  CTk imports, entry points + helpers, theme tokens / real card
+  separation, no-flat-widget source guard, real update-dict keys,
+  v1.0.8 changelog entry); `python3 run.py --version` → `1.0.8`;
+  `python3 -m py_compile app/*.py` OK. Xvfb headless smoke test OK
+  (build real app, switch all 7 pages + all tab rows, open/close
+  Add-trusted dialog + update popup, toggle appearance mode dark →
+  light → dark, simulate update progress + failure fallback, no
+  exceptions, no zero-size widgets). Real screenshots taken under Xvfb
+  (Home + Settings) and inspected: rounded cards with real contrast,
+  rounded blue buttons, rounded entries, active nav pill — visibly
+  modern vs v1.0.7. One real visual bug found in the first screenshot
+  (ghost buttons invisible as plain text on cards) and FIXED (ghost
+  fill = border color), then re-screenshotted and re-smoke-tested.
+- **Port bugs found + fixed:** (1) UI called non-existent
+  `update_checker.download_file` / `release_page_url` and passed
+  `check_for_update(VERSION, repo=…)` — corrected to the real API
+  (`download_update` + `select_setup_asset`, `check_for_update(current=
+  VERSION)`, keys `tag`/`notes`/`url`/`assets`); guarded by a new test
+  so it can't regress. (2) The v1.0.7 popup source-guard test required
+  old helper names (`_close_update_popup`, `columnconfigure`) — updated
+  to guard the same intent (exactly 2 main buttons in the popup,
+  release-page link only in the failure path, 520×420). (3) First full
+  run showed 3 loopback/discovery failures — proven ENVIRONMENTAL
+  (test venv lacked `cryptography`; host TLS cert gen failed), NOT a
+  code regression: after `pip install -r requirements.txt` in the venv,
+  all pass.
+- **NOT yet verified:** real Windows GUI, real 2-PC LAN/signaling test,
+  real Windows upgrade run with the app running, in-app download vs a
+  real Release. Real-UDP discovery test still skips in this sandbox
+  (EPERM) as before.
+
 # TEST REPORT — RemoteDesk v1.0.7 (honest status)
 
 ## v1.0.7 addendum (this session) — 3 REAL bug fixes + fresh UI + installer hardening
